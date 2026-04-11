@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master]      # post-merge verification
+  pull_request:
+    branches: [master]      # status check on every PR
+  workflow_dispatch:        # manual trigger from Actions tab
+
+# Cancel in-progress runs on the same PR branch when new commits arrive.
+# On master (merge commits) every run is independent — don't cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: "1"   # prevent Rich/Typer ANSI codes breaking output assertions
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: uv sync --extra dev --reinstall-package semanticdog
+
+      - name: Run tests
+        run: uv run pytest --tb=short -q
+
+      - name: Check deps matrix
+        run: uv run sdog check-deps || true   # informational — exiftool absent in CI is expected

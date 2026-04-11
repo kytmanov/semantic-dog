@@ -1,0 +1,75 @@
+# SemanticDog example configuration
+# Copy to config.yaml and edit as needed.
+# Environment variables override YAML values.
+
+# Colon-separated scan roots (or YAML list for paths with special chars)
+paths:
+  - /mnt/photos
+  - /mnt/documents
+
+# Glob patterns to exclude (Lightroom cache, Synology thumbs, etc.)
+exclude:
+  - "**/@eaDir/**"
+  - "**/.DS_Store"
+  - "**/*.lrprev"
+  - "**/Lightroom Catalog Previews.lrdata/**"
+
+# Follow symlinks during walk (false recommended — avoids loops + path-traversal)
+follow_symlinks: false
+
+# SQLite state database path
+db_path: /data/state/state.db
+
+# Log file path
+log_path: /data/logs/sdog.log
+log_max_bytes: 52428800   # 50 MB
+log_backup_count: 5
+
+# Cron schedule (supercronic format)
+schedule: "0 2 * * *"
+
+# Worker counts
+workers: 4          # low/medium memory formats
+raw_workers: 2      # high-memory RAW formats
+
+# RAW decode depth: 'structure' (fast, default) or 'full' (demosaicing pipeline)
+raw_decode_depth: structure
+
+# Per-file validation timeout in seconds
+validation_timeout_s: 120
+
+# Force recheck after N days regardless of mtime/size (0 = disabled)
+force_recheck_days: 90
+
+# I/O throttle — sleep between file submissions (ms)
+io_throttle_ms: 0
+
+# Content hash (for moved-file detection and verify-hashes)
+enable_hash: false
+hash_full_threshold_mb: 10   # full SHA-256 below this; partial above
+
+# Memory watchdog (requires psutil; 0 = disabled)
+memory_limit_mb: 0
+
+# HTTP server port (Prometheus /metrics, POST /trigger, /mcp)
+http_port: 9090
+
+# Notifications
+notify_email: ""          # SMTP recipient
+smtp_host: ""
+smtp_user: ""
+smtp_pass: ""             # use SDOG_SMTP_PASS env var in production
+
+webhook_url: ""           # Gotify / Ntfy / Pushover / Slack webhook
+
+# TrueNAS (experimental alert push — may break on SCALE upgrades)
+truenas_url: ""
+truenas_key: ""
+truenas_alerts_experimental: false
+
+# MCP agent integration (disabled by default)
+mcp_enabled: false
+# mcp_auth_token: ""      # required if mcp_enabled; set via SDOG_MCP_AUTH_TOKEN env var
+mcp_allow_write: false    # allow scan + reset tools via MCP
+mcp_expose_resources: false  # expose SQLite as MCP resources (privacy risk — see docs)
+mcp_rate_limit_s: 60      # global min seconds between MCP-triggered scans
