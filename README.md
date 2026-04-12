@@ -16,7 +16,7 @@ SemanticDog scans your library on a schedule, tells you which files are corrupt,
 # with pip
 pip install semanticdog
 
-# with uv (recommended)
+# with uv
 uv tool install semanticdog
 ```
 
