@@ -70,8 +70,13 @@ class PngValidator(BaseValidator):
 
     def validate(self, path: str) -> ValidationResult:
         import os
-        if not os.path.exists(path):
-            return ValidationResult(status="unreadable", error=f"[Errno 2] No such file or directory: '{path}'")
+        # Guard pngcheck: missing file → unreadable (pngcheck returns corrupt for missing)
+        try:
+            os.stat(path)
+        except FileNotFoundError as e:
+            return ValidationResult(status="unreadable", error=str(e))
+        except OSError as e:
+            return ValidationResult(status="unreadable", error=str(e))
 
         # 1. pngcheck (soft dep)
         rc, out = _run_cli(["pngcheck", path])

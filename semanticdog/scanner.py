@@ -237,10 +237,16 @@ class Scanner:
                 )
 
             scan_id = resume_scan_id
+            # Restore counts from files table (scans table counters are 0 for
+            # interrupted scans because finish_scan() was never called).
+            prior = self.db.get_scan_file_counts(scan_id)
             stats = ScanStats(
-                total=existing["total"] or 0,
-                corrupt=existing["corrupt"] or 0,
-                unreadable=existing["unreadable"] or 0,
+                total=prior["total"],
+                ok=prior["ok"],
+                corrupt=prior["corrupt"],
+                unreadable=prior["unreadable"],
+                unsupported=prior["unsupported"],
+                error=prior["error"],
                 scan_id=scan_id,
             )
 
@@ -378,10 +384,20 @@ class Scanner:
                 post_stat = os.stat(fpath)
                 if post_stat.st_mtime != pre_mtime or post_stat.st_size != pre_size:
                     stats.toctou_discards += 1
+                    _processed += 1
+                    done_batch.append(fpath)
+                    if len(done_batch) >= 100:
+                        self.db.mark_queue_done(scan_id, done_batch)
+                        done_batch.clear()
                     _maybe_progress()
                     return
             except OSError:
                 stats.toctou_discards += 1
+                _processed += 1
+                done_batch.append(fpath)
+                if len(done_batch) >= 100:
+                    self.db.mark_queue_done(scan_id, done_batch)
+                    done_batch.clear()
                 _maybe_progress()
                 return
 
