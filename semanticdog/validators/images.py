@@ -35,10 +35,11 @@ class JpegValidator(BaseValidator):
 
     def validate(self, path: str) -> ValidationResult:
         # 1. jpeginfo (soft dep) — catches truncation and bad Huffman tables
+        # jpeginfo exits 1 for both WARNINGs (benign) and ERRORs (real corruption)
         rc, out = _run_cli(["jpeginfo", "-c", path])
         if rc == -1:
             pass  # jpeginfo not installed — skip
-        elif rc != 0:
+        elif rc != 0 and "ERROR" in out:
             return ValidationResult(
                 status="corrupt",
                 error=out or "jpeginfo reported error",
@@ -68,6 +69,10 @@ class PngValidator(BaseValidator):
     memory_category: ClassVar[str] = "low"
 
     def validate(self, path: str) -> ValidationResult:
+        import os
+        if not os.path.exists(path):
+            return ValidationResult(status="unreadable", error=f"[Errno 2] No such file or directory: '{path}'")
+
         # 1. pngcheck (soft dep)
         rc, out = _run_cli(["pngcheck", path])
         if rc == -1:

@@ -48,7 +48,7 @@ def _cfg_env(monkeypatch, tmp_path, **overrides):
 class TestCliHelp:
     @pytest.mark.parametrize("cmd", [
         "scan", "estimate", "status", "list-scans", "report",
-        "show-corrupt", "show-stats", "reset", "check-deps",
+        "show-stats", "reset", "check-deps",
         "db-export", "db-import", "verify-hashes",
     ])
     def test_help_exits_zero(self, cmd):
@@ -186,7 +186,7 @@ class TestStatusCommands:
 
 
 # ---------------------------------------------------------------------------
-# report / show-corrupt / show-stats
+# report / show-stats
 # ---------------------------------------------------------------------------
 
 class TestReportCommands:
@@ -201,12 +201,6 @@ class TestReportCommands:
         assert r.exit_code == 0
         data = json.loads(r.output)
         assert "stats" in data
-
-    def test_show_corrupt_empty(self, tmp_path, monkeypatch):
-        _cfg_env(monkeypatch, tmp_path)
-        r = runner.invoke(app, ["show-corrupt"])
-        assert r.exit_code == 0
-        assert "No corrupt" in r.output
 
     def test_show_stats_empty(self, tmp_path, monkeypatch):
         _cfg_env(monkeypatch, tmp_path)

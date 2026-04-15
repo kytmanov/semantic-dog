@@ -40,16 +40,30 @@ class DependencyReport:
     required: bool = False
 
 
+# Per-tool overrides: (args, line_index, prefer_stderr)
+_VERSION_OVERRIDES: dict[str, tuple[list[str], int, bool]] = {
+    "pngcheck":  (["-h"], 0, True),
+    "exiftool":  (["-ver"], 0, False),
+}
+
+
 def _cli_version(cmd: str) -> str | None:
     """Return version string for a CLI tool, or None if not found."""
     try:
+        args, line_idx, prefer_stderr = _VERSION_OVERRIDES.get(
+            cmd, (["--version"], 0, False)
+        )
         result = subprocess.run(
-            [cmd, "--version"],
+            [cmd, *args],
             capture_output=True,
             text=True,
             timeout=5,
         )
-        return (result.stdout or result.stderr).strip().splitlines()[0]
+        output = (result.stderr if prefer_stderr else result.stdout).strip()
+        if not output:
+            output = (result.stdout if prefer_stderr else result.stderr).strip()
+        lines = output.splitlines()
+        return lines[line_idx] if line_idx < len(lines) else None
     except Exception:
         return None
 

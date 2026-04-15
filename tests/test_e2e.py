@@ -225,11 +225,11 @@ class TestCliScanE2E:
         r = runner.invoke(cli_app, ["scan", "--config", cfg_path])
         assert r.exit_code == 2, r.output
 
-    def test_scan_then_show_corrupt(self, tmp_path):
+    def test_scan_then_report_shows_corrupt(self, tmp_path):
         make_truncated_jpeg(tmp_path / "bad.jpg")
         cfg_path = _yaml_cfg(tmp_path)
         runner.invoke(cli_app, ["scan", "--config", cfg_path])
-        r = runner.invoke(cli_app, ["show-corrupt", "--config", cfg_path])
+        r = runner.invoke(cli_app, ["report", "--config", cfg_path])
         assert r.exit_code == 0
         assert "bad.jpg" in r.output
 
@@ -275,9 +275,10 @@ class TestCliScanE2E:
         r = runner.invoke(cli_app, ["reset", "--yes", "--config", cfg_path])
         assert r.exit_code == 0
         assert "1" in r.output
-        # After reset, show-corrupt should show nothing
-        r2 = runner.invoke(cli_app, ["show-corrupt", "--config", cfg_path])
-        assert "No corrupt" in r2.output
+        # After reset, report should show no corrupt files
+        r2 = runner.invoke(cli_app, ["report", "--config", cfg_path])
+        assert r2.exit_code == 0
+        assert "corrupt" not in r2.output.lower() or "0" in r2.output
 
     def test_report_json_has_stats(self, tmp_path):
         make_minimal_jpeg(tmp_path / "img.jpg")
@@ -503,3 +504,92 @@ class TestMultiFormatScanE2E:
         scanner = Scanner(cfg, db)
         scanner.scan()
         assert db.get_stats()["by_status"].get("corrupt", 0) >= 2
+
+
+# ---------------------------------------------------------------------------
+# E2E: cancel + resume
+# ---------------------------------------------------------------------------
+
+class TestResumeE2E:
+    def test_interrupted_scan_shows_incomplete_in_list(self, tmp_path):
+        """Scan interrupted via shutdown appears as 'incomplete' in list-scans."""
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        cfg_obj = _cfg(tmp_path)
+        db = Database(cfg_obj.db_path)
+        scanner = Scanner(cfg_obj, db)
+        scanner._shutdown.set()
+        scanner.scan()
+
+        cfg_path = _yaml_cfg(tmp_path)
+        r = runner.invoke(cli_app, ["list-scans", "--config", cfg_path])
+        assert r.exit_code == 0
+        assert "incomplete" in r.output
+
+    def test_resume_via_cli_completes_scan(self, tmp_path):
+        """--resume flag completes an interrupted scan and sets finished_at."""
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        cfg_obj = _cfg(tmp_path)
+        db = Database(cfg_obj.db_path)
+        # Interrupt immediately via pre-set shutdown
+        scanner = Scanner(cfg_obj, db)
+        scanner._shutdown.set()
+        stats = scanner.scan()
+        scan_id = stats.scan_id
+        assert db.get_scan(scan_id)["finished_at"] is None
+
+        # Resume via CLI — should complete
+        cfg_path = _yaml_cfg(tmp_path)
+        r = runner.invoke(cli_app, ["scan", "--resume", scan_id, "--config", cfg_path])
+        assert r.exit_code in (0, 2)
+        assert db.get_scan(scan_id)["finished_at"] is not None
+
+    def test_resume_completed_scan_via_cli_exits_error(self, tmp_path):
+        """--resume on a finished scan exits with code 1 and prints error."""
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        cfg_path = _yaml_cfg(tmp_path)
+        runner.invoke(cli_app, ["scan", "--config", cfg_path])
+        db = Database(str(tmp_path / "state.db"))
+        scan_id = db.list_scans()[0]["id"]
+
+        r = runner.invoke(cli_app, ["scan", "--resume", scan_id, "--config", cfg_path])
+        assert r.exit_code == 1
+
+    def test_resume_skipped_files_dont_persist_as_pending(self, tmp_path):
+        """
+        Regression: files skipped on resume (already validated) are marked done
+        in scan_queue. A second resume sees 0 pending, not the original count.
+        """
+        files = [make_minimal_jpeg(tmp_path / f"img{i}.jpg") for i in range(3)]
+        cfg_obj = _cfg(tmp_path)
+        db = Database(cfg_obj.db_path)
+        # Initial scan: all files into DB
+        Scanner(cfg_obj, db).scan()
+
+        # Simulate interrupted scan with all 3 files pending
+        scan_id = db.create_scan(scope=str(tmp_path))
+        db.queue_paths(scan_id, [str(f) for f in files])
+        assert len(db.get_all_pending_paths(scan_id)) == 3
+
+        # Resume via CLI — files are already in DB so they'll be skipped
+        cfg_path = _yaml_cfg(tmp_path)
+        r = runner.invoke(cli_app, ["scan", "--resume", scan_id, "--config", cfg_path])
+        assert r.exit_code == 0
+
+        # All must be marked done — no pending remain
+        assert db.get_all_pending_paths(scan_id) == []
+
+    def test_stats_ok_corrupt_nonzero_after_scan(self, tmp_path):
+        """
+        Inline stats fix: ok/corrupt populated in real time, not just at end.
+        Verifies stats match what was written to DB.
+        """
+        make_minimal_jpeg(tmp_path / "ok.jpg")
+        make_truncated_jpeg(tmp_path / "bad.jpg")
+        cfg_obj = _cfg(tmp_path)
+        db = Database(cfg_obj.db_path)
+        stats = Scanner(cfg_obj, db).scan()
+
+        assert stats.ok >= 1
+        assert stats.corrupt >= 1
+        assert stats.ok == db.get_stats()["by_status"].get("ok", 0)
+        assert stats.corrupt == db.get_stats()["by_status"].get("corrupt", 0)

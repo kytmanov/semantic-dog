@@ -13,7 +13,7 @@ import pytest
 from semanticdog.config import Config
 from semanticdog.db import Database
 from semanticdog.scanner import Scanner, ScanStats, walk_paths, is_excluded, _validate_file
-from tests.fixtures.generators import make_minimal_jpeg, make_minimal_png, make_not_an_image
+from tests.fixtures.generators import make_minimal_jpeg, make_minimal_png, make_not_an_image, make_truncated_jpeg
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ class TestTOCTOU:
 
         original_run_pool = scanner._run_pool
 
-        def _patched_run_pool(file_list, scan_id, stats, workers, context):
+        def _patched_run_pool(file_list, scan_id, stats, workers, context, total_files, is_tty):
             # Mutate the file between submit and TOCTOU check by patching os.stat
             original_stat = os.stat
 
@@ -308,7 +308,7 @@ class TestTOCTOU:
                 return st
 
             with patch("semanticdog.scanner.os.stat", side_effect=_fake_stat):
-                original_run_pool(file_list, scan_id, stats, workers, context)
+                original_run_pool(file_list, scan_id, stats, workers, context, total_files, is_tty)
 
         with patch.object(scanner, "_run_pool", side_effect=_patched_run_pool):
             stats = scanner.scan([str(tmp_path)])
@@ -334,3 +334,113 @@ class TestScannerShutdown:
         stats = scanner.scan([str(tmp_path)])
         # No futures submitted — all skipped or zero processed
         assert stats.total == 0
+
+
+# ---------------------------------------------------------------------------
+# Inline stats: ok/corrupt/unreadable updated during scan (not only at end)
+# ---------------------------------------------------------------------------
+
+class TestScannerInlineStats:
+    """stats.ok / stats.corrupt / files_per_sec populated while scan runs."""
+
+    def test_ok_count_matches_db_after_scan(self, cfg, db, tmp_path):
+        for i in range(3):
+            make_minimal_jpeg(tmp_path / f"img{i}.jpg")
+        stats = Scanner(cfg, db).scan([str(tmp_path)])
+        assert stats.ok >= 1
+        assert stats.ok == db.get_stats()["by_status"].get("ok", 0)
+
+    def test_corrupt_count_matches_db_after_scan(self, cfg, db, tmp_path):
+        make_truncated_jpeg(tmp_path / "bad.jpg")
+        stats = Scanner(cfg, db).scan([str(tmp_path)])
+        assert stats.corrupt >= 1
+        assert stats.corrupt == db.get_stats()["by_status"].get("corrupt", 0)
+
+    def test_files_per_sec_nonzero_when_files_validated(self, cfg, db, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        stats = Scanner(cfg, db).scan([str(tmp_path)])
+        if stats.total > 0:
+            assert stats.files_per_sec() > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Resume: cancel/resume scan preserves position across multiple interrupts
+# ---------------------------------------------------------------------------
+
+class TestScannerResume:
+    def test_scan_id_populated_on_stats(self, scanner, tmp_path):
+        stats = scanner.scan([str(tmp_path)])
+        assert stats.scan_id != ""
+
+    def test_resume_nonexistent_id_raises(self, scanner):
+        from semanticdog.exceptions import ScanError
+        with pytest.raises(ScanError, match="not found"):
+            scanner.scan(resume_scan_id="nonexistent-id")
+
+    def test_resume_completed_scan_raises(self, cfg, db, tmp_path):
+        from semanticdog.exceptions import ScanError
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        stats = Scanner(cfg, db).scan([str(tmp_path)])
+        with pytest.raises(ScanError, match="already completed"):
+            Scanner(cfg, db).scan(resume_scan_id=stats.scan_id)
+
+    def test_interrupted_scan_has_null_finished_at(self, cfg, db, tmp_path):
+        """Pre-set shutdown → scan record stays incomplete (finished_at IS NULL)."""
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        scanner = Scanner(cfg, db)
+        scanner._shutdown.set()
+        scanner.scan([str(tmp_path)])
+        scans = db.list_scans()
+        assert len(scans) >= 1
+        assert scans[0]["finished_at"] is None
+
+    def test_completed_scan_has_nonnull_finished_at(self, cfg, db, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        Scanner(cfg, db).scan([str(tmp_path)])
+        scans = db.list_scans()
+        assert scans[0]["finished_at"] is not None
+
+    def test_resume_skipped_files_marked_done_in_queue(self, cfg, db, tmp_path):
+        """
+        Regression: files already in DB that are skipped on resume must be
+        marked done=1 in scan_queue. Without the fix, get_all_pending_paths
+        returns the same stale entries on every subsequent resume.
+        """
+        p1 = make_minimal_jpeg(tmp_path / "a.jpg")
+        p2 = make_minimal_jpeg(tmp_path / "b.jpg")
+        # Initial scan: puts both files into the files table
+        Scanner(cfg, db).scan([str(tmp_path)])
+
+        # Simulate interrupted scan: both files still listed as pending
+        interrupted_id = db.create_scan(scope=str(tmp_path))
+        db.queue_paths(interrupted_id, [str(p1), str(p2)])
+        assert len(db.get_all_pending_paths(interrupted_id)) == 2
+
+        # Resume: files are already in DB → skipped → must be marked done
+        Scanner(cfg, db).scan(resume_scan_id=interrupted_id)
+
+        assert db.get_all_pending_paths(interrupted_id) == []
+
+    def test_double_resume_pending_count_shrinks(self, cfg, db, tmp_path):
+        """
+        Second resume sees fewer pending files than first, not the same count.
+        Verifies the fix holds across multiple interrupt/resume cycles.
+        """
+        files = [make_minimal_jpeg(tmp_path / f"f{i}.jpg") for i in range(4)]
+        Scanner(cfg, db).scan([str(tmp_path)])  # all files in DB
+
+        # First interrupted scan: all 4 pending
+        sid1 = db.create_scan(scope=str(tmp_path))
+        db.queue_paths(sid1, [str(f) for f in files])
+
+        Scanner(cfg, db).scan(resume_scan_id=sid1)
+        assert db.get_all_pending_paths(sid1) == []
+
+        # Second interrupted scan: mark 2 as already done, 2 still pending
+        sid2 = db.create_scan(scope=str(tmp_path))
+        db.queue_paths(sid2, [str(f) for f in files])
+        db.mark_queue_done(sid2, [str(files[0]), str(files[1])])
+        assert len(db.get_all_pending_paths(sid2)) == 2
+
+        Scanner(cfg, db).scan(resume_scan_id=sid2)
+        assert db.get_all_pending_paths(sid2) == []

@@ -7,7 +7,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator, Iterator
 
@@ -263,10 +263,50 @@ class Database:
                 "SELECT status, COUNT(*) as cnt FROM files GROUP BY status"
             ).fetchall()
             total_all = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            total_size = conn.execute("SELECT SUM(size) FROM files").fetchone()[0] or 0
             return {
                 "total": total_all,
+                "total_size_bytes": total_size,
                 "by_status": {r["status"]: r["cnt"] for r in totals},
             }
+        finally:
+            conn.close()
+
+    def get_format_counts(self) -> list[tuple[str, int]]:
+        """Return file counts grouped by extension, sorted by count descending."""
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        finally:
+            conn.close()
+        counts: dict[str, int] = {}
+        for r in rows:
+            ext = Path(r["path"]).suffix.lower() or "(no ext)"
+            counts[ext] = counts.get(ext, 0) + 1
+        return sorted(counts.items(), key=lambda x: -x[1])
+
+    def get_stale_count(self, days: int) -> int:
+        """Return count of files not checked in the last `days` days."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        conn = self._connect()
+        try:
+            return conn.execute(
+                "SELECT COUNT(*) FROM files WHERE checked_at < ?", (cutoff,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    def get_top_errors(self, limit: int = 5) -> list[tuple[str, int]]:
+        """Return most frequent error strings with counts."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT error, COUNT(*) as cnt FROM files"
+                " WHERE error IS NOT NULL AND error != ''"
+                " GROUP BY error ORDER BY cnt DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [(r["error"], r["cnt"]) for r in rows]
         finally:
             conn.close()
 
@@ -331,6 +371,15 @@ class Database:
         finally:
             conn.close()
 
+    def get_scan(self, scan_id: str) -> dict[str, Any] | None:
+        """Return a single scan record by ID, or None if not found."""
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM scans WHERE id=?", (scan_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     def list_scans(self, limit: int = 20) -> list[dict[str, Any]]:
         conn = self._connect()
         try:
@@ -377,6 +426,18 @@ class Database:
             rows = conn.execute(
                 "SELECT path FROM scan_queue WHERE scan_id=? AND done=0 LIMIT ?",
                 (scan_id, batch),
+            ).fetchall()
+            return [r["path"] for r in rows]
+        finally:
+            conn.close()
+
+    def get_all_pending_paths(self, scan_id: str) -> list[str]:
+        """Return all pending (done=0) paths for a scan — no LIMIT."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT path FROM scan_queue WHERE scan_id=? AND done=0",
+                (scan_id,),
             ).fetchall()
             return [r["path"] for r in rows]
         finally:
@@ -566,12 +627,12 @@ class Database:
                     alive = True
                 except (ProcessLookupError, PermissionError):
                     alive = False
-                if alive and stored_uuid == boot_uuid:
+                if alive and stored_uuid != boot_uuid:
                     raise LockError(
                         f"Another sdog instance is running (PID {pid}). "
                         "Use 'sdog status' to check."
                     )
-                # Stale lock (dead PID or different UUID) — clean up
+                # Stale lock (dead PID or same-process re-acquire) — clean up
             except (json.JSONDecodeError, KeyError):
                 pass  # malformed lock — overwrite
 

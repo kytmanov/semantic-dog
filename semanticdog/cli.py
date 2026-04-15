@@ -14,13 +14,30 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-_DEFAULT_CONFIG = "/data/config/config.yaml"
+_CONFIG_SEARCH_PATHS = [
+    "./config.yaml",
+    "~/.config/semanticdog/config.yaml",
+    "/data/config/config.yaml",
+]
 
 
-def _load_cfg(config_path: str | None = None):
+def _find_config() -> str | None:
+    from pathlib import Path
+    for candidate in _CONFIG_SEARCH_PATHS:
+        p = Path(candidate).expanduser()
+        if p.exists():
+            return str(p)
+    return None
+
+
+def _load_cfg(config_path: str | None = None, validate: bool = False):
     from .config import load_config
+    resolved = config_path or _find_config()
     try:
-        return load_config(config_path)
+        cfg = load_config(resolved)
+        if validate:
+            cfg.validate()
+        return cfg
     except Exception as e:
         typer.echo(f"Config error: {e}", err=True)
         raise typer.Exit(1)
@@ -48,8 +65,12 @@ def scan(
     resume: Optional[str] = typer.Option(None, "--resume", help="Resume interrupted scan by scan ID"),
     config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML"),
 ) -> None:
-    """Validate files for semantic integrity."""
-    cfg = _load_cfg(config)
+    """Validate files for semantic integrity.
+
+    Progress is printed to stderr every 5 seconds with % complete and ETA.
+    The scan ID is printed at startup — use it with --resume to continue an interrupted scan.
+    """
+    cfg = _load_cfg(config, validate=True)
     if path:
         cfg.paths = [path]
     if exclude:
@@ -71,9 +92,19 @@ def scan(
 
     db = _open_db(cfg)
     from .scanner import Scanner
+    from .exceptions import ScanError
     scanner = Scanner(cfg, db)
-    typer.echo(f"Scanning {', '.join(cfg.paths)} ...")
-    stats = scanner.scan()
+    if resume:
+        typer.echo(f"Resuming scan {resume} ...")
+    else:
+        typer.echo(f"Scanning {', '.join(cfg.paths)} ...")
+    try:
+        stats = scanner.scan(resume_scan_id=resume)
+    except ScanError as e:
+        typer.echo(f"Scan error: {e}", err=True)
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        raise typer.Exit(130)
     typer.echo(
         f"Done: {stats.total} validated, {stats.corrupt} corrupt, "
         f"{stats.unreadable} unreadable, {stats.skipped} skipped, "
@@ -93,7 +124,7 @@ def estimate(
     config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML"),
 ) -> None:
     """Estimate file count and scan duration without validating."""
-    cfg = _load_cfg(config)
+    cfg = _load_cfg(config, validate=True)
     db = _open_db(cfg)
     from .scanner import Scanner
     scanner = Scanner(cfg, db)
@@ -154,12 +185,12 @@ def list_scans(
     if not scans:
         typer.echo("No scans recorded yet.")
         return
-    typer.echo(f"{'ID':36s}  {'Started':26s}  {'Status':12s}  Files  Corrupt")
-    typer.echo("-" * 90)
+    typer.echo(f"{'ID':36s}  {'Started':32s}  {'Status':12s}  {'Files':>5s}  {'Corrupt':>7s}")
+    typer.echo("─" * 100)
     for s in scans:
         status_str = "complete" if s["finished_at"] else "incomplete"
         typer.echo(
-            f"{s['id']:36s}  {s['started_at'] or '':26s}  {status_str:12s}  "
+            f"{s['id']:36s}  {s['started_at'] or '':32s}  {status_str:12s}  "
             f"{s['total']:5d}  {s['corrupt']:7d}"
         )
 
@@ -174,7 +205,11 @@ def report(
     since: Optional[str] = typer.Option(None, "--since", help="Filter results after this ISO date"),
     config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML"),
 ) -> None:
-    """Show validation report."""
+    """List corrupt files with details — the drill-down companion to show-stats.
+
+    Shows individual corrupt file paths and error messages. Use --since to scope
+    to recent scans, --format json/csv for scripting or export.
+    """
     cfg = _load_cfg(config)
     db = _open_db(cfg)
     stats = db.get_stats()
@@ -198,27 +233,6 @@ def report(
                 typer.echo(f"  ... and {len(rows) - 20} more")
 
 
-# ---------------------------------------------------------------------------
-# show-corrupt
-# ---------------------------------------------------------------------------
-
-@app.command("show-corrupt")
-def show_corrupt(
-    format: Optional[str] = typer.Option(None, "--format", help="Filter by extension e.g. cr2"),
-    path: Optional[str] = typer.Option(None, "--path", help="Filter by path prefix"),
-    config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML"),
-) -> None:
-    """List all corrupt files."""
-    cfg = _load_cfg(config)
-    db = _open_db(cfg)
-    rows = db.get_corrupt_files(ext=format, path_prefix=path)
-    if not rows:
-        typer.echo("No corrupt files found.")
-        return
-    for r in rows:
-        err = f"  [{r['error']}]" if r.get("error") else ""
-        typer.echo(f"{r['path']}{err}")
-
 
 # ---------------------------------------------------------------------------
 # show-stats
@@ -226,17 +240,82 @@ def show_corrupt(
 
 @app.command("show-stats")
 def show_stats(
+    stale_days: Optional[int] = typer.Option(None, "--stale-days", help="Stale threshold in days (default: force_recheck_days from config)"),
     config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML"),
 ) -> None:
-    """Show aggregate statistics by format and status."""
+    """Library health dashboard — answers "is everything OK?"
+
+    Shows aggregate counts by status and format, scan health trend, stale files,
+    and most frequent errors. For a list of individual corrupt files use 'report'.
+    """
     cfg = _load_cfg(config)
     db = _open_db(cfg)
-    stats = db.get_stats()
-    typer.echo(f"Total files indexed: {stats['total']}")
+    threshold = stale_days if stale_days is not None else cfg.force_recheck_days
+
+    stats   = db.get_stats()
+    scans   = db.list_scans(limit=5)
+    formats = db.get_format_counts()
+    stale   = db.get_stale_count(threshold)
+    errors  = db.get_top_errors()
+
+    # -- Last scan --
+    completed = [s for s in scans if s["finished_at"]]
+    if completed:
+        s = completed[0]
+        typer.echo(f"Last scan:  {s['finished_at']}  complete  {s['total']} files  {s['corrupt']} corrupt")
+    else:
+        typer.echo("Last scan:  No completed scans recorded yet.")
     typer.echo("")
-    typer.echo("By status:")
+
+    # -- Files by status --
+    typer.echo("Files by status:")
     for st, cnt in sorted(stats.get("by_status", {}).items()):
         typer.echo(f"  {st:<16s} {cnt:>8d}")
+    size_bytes = stats.get("total_size_bytes", 0) or 0
+    if size_bytes >= 1_073_741_824:
+        size_str = f"{size_bytes / 1_073_741_824:.1f} GB"
+    elif size_bytes >= 1_048_576:
+        size_str = f"{size_bytes / 1_048_576:.1f} MB"
+    else:
+        size_str = f"{size_bytes / 1024:.1f} KB"
+    typer.echo(f"  {'total size':<16s} {size_str}")
+    typer.echo("")
+
+    # -- Files by format --
+    typer.echo("Files by format:")
+    if formats:
+        for ext, cnt in formats:
+            typer.echo(f"  {ext:<16s} {cnt:>8d}")
+    else:
+        typer.echo("  (none)")
+    typer.echo("")
+
+    # -- Scan health trend --
+    if completed:
+        typer.echo("Scan health (last 5 completed):")
+        for s in completed:
+            date = (s["finished_at"] or "")[:10]
+            typer.echo(
+                f"  {date}  {s['total']:>5d} total  {s['corrupt']:>3d} corrupt  {s['unreadable']:>3d} unreadable"
+            )
+        incomplete = [s for s in scans if not s["finished_at"]]
+        if incomplete:
+            typer.echo(f"  ({len(incomplete)} incomplete scan(s) not shown)")
+    else:
+        typer.echo("Scan health:  No completed scans yet.")
+    typer.echo("")
+
+    # -- Stale files --
+    typer.echo(f"Stale files (>{threshold} days without check):  {stale}")
+    typer.echo("")
+
+    # -- Top errors --
+    if errors:
+        typer.echo("Top errors:")
+        for msg, cnt in errors:
+            truncated = msg[:60] + "…" if len(msg) > 60 else msg
+            typer.echo(f"  {truncated:<62s} ({cnt})")
+
 
 
 # ---------------------------------------------------------------------------

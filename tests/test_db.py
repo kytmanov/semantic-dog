@@ -553,18 +553,18 @@ class TestInstanceLock:
         info = json.loads(db.get_meta("lock"))
         assert info["pid"] == os.getpid()
 
-    def test_live_same_uuid_raises(self, db):
+    def test_live_same_uuid_does_not_raise(self, db):
+        """Same PID + same UUID = same process re-acquiring its own lock → allow."""
         uuid = "same-uuid"
         db.acquire_lock(uuid)
-        with pytest.raises(LockError, match="Another sdog instance"):
-            db.acquire_lock(uuid)
+        db.acquire_lock(uuid)  # must not raise — same instance
         db.release_lock()
 
-    def test_live_different_uuid_does_not_raise(self, db):
-        """Same PID but different boot_uuid = stale from prior run, overwrite."""
-        db.set_meta("lock", json.dumps({"pid": os.getpid(), "boot_uuid": "different-uuid"}))
-        db.acquire_lock("new-uuid")  # must not raise
-        db.release_lock()
+    def test_live_different_uuid_raises(self, db):
+        """Live PID with a different UUID = a different sdog process → block it."""
+        db.set_meta("lock", json.dumps({"pid": os.getpid(), "boot_uuid": "other-uuid"}))
+        with pytest.raises(LockError, match="Another sdog instance"):
+            db.acquire_lock("new-uuid")
 
     def test_malformed_lock_overwritten(self, db):
         db.set_meta("lock", "not-valid-json{{")
