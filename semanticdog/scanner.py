@@ -5,10 +5,11 @@ from __future__ import annotations
 import multiprocessing
 import os
 import signal
+import sys
 import threading
 import time
 import uuid
-from concurrent.futures import as_completed, TimeoutError as FuturesTimeoutError
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,6 +80,7 @@ class ScanStats:
     skipped: int = 0
     toctou_discards: int = 0
     start_time: float = field(default_factory=time.monotonic)
+    scan_id: str = ""
 
     def files_per_sec(self) -> float:
         elapsed = time.monotonic() - self.start_time
@@ -136,6 +138,38 @@ def walk_paths(
 
 
 # ---------------------------------------------------------------------------
+# Progress helpers
+# ---------------------------------------------------------------------------
+
+_PROGRESS_INTERVAL_S = 5.0  # print progress at most this often
+
+
+def _progress_line(done: int, total: int, stats: ScanStats) -> str:
+    pct = done / total * 100 if total else 0.0
+    fps = stats.files_per_sec()
+    remaining = total - done
+    if fps > 0 and remaining > 0:
+        eta_min = remaining / fps / 60
+        eta_str = f"  ETA: ~{eta_min:.1f} min"
+    else:
+        eta_str = ""
+    return (
+        f"  [{done}/{total}]  {pct:.1f}%"
+        f"  ok:{stats.ok}  corrupt:{stats.corrupt}  unreadable:{stats.unreadable}"
+        f"  {fps:.1f} f/s{eta_str}"
+    )
+
+
+def _print_progress(line: str, is_tty: bool) -> None:
+    if is_tty:
+        sys.stderr.write(f"\r{line}")
+        sys.stderr.flush()
+    else:
+        sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+
+
+# ---------------------------------------------------------------------------
 # Scanner
 # ---------------------------------------------------------------------------
 
@@ -173,42 +207,122 @@ class Scanner:
                 counts[ext] = counts.get(ext, 0) + 1
         return counts
 
-    def scan(self, paths: list[str] | None = None) -> ScanStats:
-        """Run a full scan. Acquires instance lock, returns ScanStats."""
+    def scan(
+        self,
+        paths: list[str] | None = None,
+        resume_scan_id: str | None = None,
+    ) -> ScanStats:
+        """Run a full scan or resume an interrupted one. Returns ScanStats."""
         from pebble import ProcessPool  # noqa: F401 — ensures pebble available
+        from .exceptions import ScanError
 
         self._install_sigterm()
         self.db.acquire_lock(self._boot_uuid)
-        scan_paths = paths or self.config.paths
-        scan_id = self.db.create_scan(scope=",".join(scan_paths))
-        stats = ScanStats()
 
         mp_ctx = multiprocessing.get_context("spawn")
+        is_tty = sys.stderr.isatty()
+        interrupted = False
 
-        try:
+        if resume_scan_id:
+            # ---- Resume path ----
+            existing = self.db.get_scan(resume_scan_id)
+            if existing is None:
+                self.db.release_lock()
+                raise ScanError(f"Scan ID not found: {resume_scan_id!r}")
+            if existing["finished_at"] is not None:
+                self.db.release_lock()
+                raise ScanError(
+                    f"Scan {resume_scan_id!r} already completed "
+                    f"(finished {existing['finished_at']}). Cannot resume."
+                )
+
+            scan_id = resume_scan_id
+            # Restore counts from files table (scans table counters are 0 for
+            # interrupted scans because finish_scan() was never called).
+            prior = self.db.get_scan_file_counts(scan_id)
+            stats = ScanStats(
+                total=prior["total"],
+                ok=prior["ok"],
+                corrupt=prior["corrupt"],
+                unreadable=prior["unreadable"],
+                unsupported=prior["unsupported"],
+                error=prior["error"],
+                scan_id=scan_id,
+            )
+
+            pending_paths = self.db.get_all_pending_paths(scan_id)
+            sys.stderr.write(
+                f"Resuming scan {scan_id}\n"
+                f"Pending files: {len(pending_paths)}\n"
+            )
+            sys.stderr.flush()
+
+            # Re-stat pending paths
+            file_list: list[tuple[str, float, int]] = []
+            for p in pending_paths:
+                try:
+                    st = os.stat(p)
+                    file_list.append((p, st.st_mtime, st.st_size))
+                except OSError:
+                    file_list.append((p, 0.0, 0))
+
+        else:
+            # ---- New scan path ----
+            scan_paths = paths or self.config.paths
+            scan_id = self.db.create_scan(scope=",".join(scan_paths))
+            stats = ScanStats(scan_id=scan_id)
+
             file_list = walk_paths(scan_paths, self.config.follow_symlinks, self.config.exclude)
 
-            from .validators.raw import RawValidator
-            high_exts = {e.lower() for e in RawValidator.extensions}
-
-            high_files = [(p, m, s) for p, m, s in file_list if Path(p).suffix.lower() in high_exts]
-            low_files  = [(p, m, s) for p, m, s in file_list if Path(p).suffix.lower() not in high_exts]
-
-            self._run_pool(low_files, scan_id, stats, self.config.workers, mp_ctx)
-            if not self._shutdown.is_set():
-                self._run_pool(high_files, scan_id, stats, self.config.raw_workers, mp_ctx)
-        finally:
-            self.db.finish_scan(
-                scan_id,
-                total=stats.total,
-                corrupt=stats.corrupt,
-                unreadable=stats.unreadable,
-                files_per_sec=stats.files_per_sec(),
+            sys.stderr.write(
+                f"Discovered {len(file_list)} files.\n"
+                f"Scan ID: {scan_id}  "
+                f"(resume with: sdog scan --resume {scan_id})\n"
             )
+            sys.stderr.flush()
+
+            # Populate scan_queue for resume support
+            all_paths = [p for p, _, _ in file_list]
+            self.db.queue_paths(scan_id, all_paths)
+            self.db.cleanup_stale_queues(max_age_days=7)
+
+        from .validators.raw import RawValidator
+        high_exts = {e.lower() for e in RawValidator.extensions}
+
+        high_files = [(p, m, s) for p, m, s in file_list if Path(p).suffix.lower() in high_exts]
+        low_files  = [(p, m, s) for p, m, s in file_list if Path(p).suffix.lower() not in high_exts]
+        total_files = len(file_list)
+
+        try:
+            self._run_pool(low_files, scan_id, stats, self.config.workers, mp_ctx, total_files, is_tty)
+            if not self._shutdown.is_set():
+                self._run_pool(high_files, scan_id, stats, self.config.raw_workers, mp_ctx, total_files, is_tty)
+        except KeyboardInterrupt:
+            interrupted = True
+            self._shutdown.set()
+        finally:
+            if not interrupted and not self._shutdown.is_set():
+                self.db.finish_scan(
+                    scan_id,
+                    total=stats.total,
+                    corrupt=stats.corrupt,
+                    unreadable=stats.unreadable,
+                    files_per_sec=stats.files_per_sec(),
+                )
+                self.db.cleanup_scan_queue(scan_id)
+            else:
+                sys.stderr.write(
+                    f"\nInterrupted. Resume with: sdog scan --resume {scan_id}\n"
+                )
+                sys.stderr.flush()
             self.db.release_lock()
 
-        if self.db.should_vacuum():
-            self.db.incremental_vacuum()
+        if interrupted:
+            raise KeyboardInterrupt
+
+        if not self._shutdown.is_set():
+            if self.db.should_vacuum():
+                self.db.incremental_vacuum()
 
         return stats
 
@@ -219,15 +333,102 @@ class Scanner:
         stats: ScanStats,
         workers: int,
         context: "multiprocessing.context.BaseContext",
+        total_files: int,
+        is_tty: bool,
     ) -> None:
+        import queue as _queue
         from pebble import ProcessPool
 
         timeout = self.config.validation_timeout_s
         decode_depth = self.config.raw_decode_depth
         semaphore = threading.Semaphore(workers * 2)
 
+        last_progress_t = time.monotonic()
+        done_batch: list[str] = []
+        _processed = 0
+
+        # result_q receives (future, fpath, pre_mtime, pre_size) when a worker finishes.
+        # Done callbacks run in a pebble thread — we drain in the main thread.
+        result_q: _queue.SimpleQueue = _queue.SimpleQueue()
+        _n_submitted = 0
+        _n_processed = 0  # tracks results consumed (inline drain + blocking drain)
+
+        # Print initial line immediately
+        if total_files > 0:
+            _print_progress(_progress_line(0, total_files, stats), is_tty)
+
+        def _maybe_progress() -> None:
+            nonlocal last_progress_t
+            now = time.monotonic()
+            if now - last_progress_t >= _PROGRESS_INTERVAL_S:
+                line = _progress_line(_processed, total_files, stats)
+                _print_progress(line, is_tty)
+                last_progress_t = now
+
+        def _process_result(future, fpath: str, pre_mtime: float, pre_size: int) -> None:
+            """Handle one completed future. Called from main thread only."""
+            nonlocal _processed
+            try:
+                result = future.result()
+            except FuturesTimeoutError:
+                result = ValidationResult(
+                    status="error",
+                    error=f"validation timed out after {timeout}s",
+                    suggested_action="File may be severely corrupt",
+                )
+            except Exception as e:
+                result = ValidationResult(status="error", error=str(e))
+
+            # TOCTOU: discard if file changed during validation
+            try:
+                post_stat = os.stat(fpath)
+                if post_stat.st_mtime != pre_mtime or post_stat.st_size != pre_size:
+                    stats.toctou_discards += 1
+                    _processed += 1
+                    done_batch.append(fpath)
+                    if len(done_batch) >= 100:
+                        self.db.mark_queue_done(scan_id, done_batch)
+                        done_batch.clear()
+                    _maybe_progress()
+                    return
+            except OSError:
+                stats.toctou_discards += 1
+                _processed += 1
+                done_batch.append(fpath)
+                if len(done_batch) >= 100:
+                    self.db.mark_queue_done(scan_id, done_batch)
+                    done_batch.clear()
+                _maybe_progress()
+                return
+
+            self.db.record(
+                fpath, pre_mtime, pre_size,
+                result.status, scan_id=scan_id,
+                error=result.error,
+                suggested_action=result.suggested_action,
+            )
+            stats.record(result.status)
+            _processed += 1
+
+            done_batch.append(fpath)
+            if len(done_batch) >= 100:
+                self.db.mark_queue_done(scan_id, done_batch)
+                done_batch.clear()
+
+            _maybe_progress()
+
+        def _drain_nonblocking() -> None:
+            """Drain all currently available results without blocking."""
+            nonlocal _n_processed
+            while True:
+                try:
+                    f, fp, pm, ps = result_q.get_nowait()
+                    _process_result(f, fp, pm, ps)
+                    _n_processed += 1
+                except _queue.Empty:
+                    break
+
         with ProcessPool(max_workers=workers, context=context, max_tasks=100) as pool:
-            futures: dict = {}
 
             for fpath, pre_mtime, pre_size in file_list:
                 if self._shutdown.is_set():
@@ -235,6 +436,13 @@ class Scanner:
 
                 if not self.db.needs_check(fpath, pre_mtime, pre_size, self.config.force_recheck_days):
                     stats.skipped += 1
+                    _processed += 1
+                    done_batch.append(fpath)
+                    if len(done_batch) >= 100:
+                        self.db.mark_queue_done(scan_id, done_batch)
+                        done_batch.clear()
+                    _maybe_progress()
+                    _drain_nonblocking()
                     continue
 
                 # Unstat-able → record immediately
@@ -242,6 +450,13 @@ class Scanner:
                     self.db.record(fpath, 0.0, 0, "unreadable", scan_id=scan_id,
                                    error="Cannot stat file")
                     stats.record("unreadable")
+                    _processed += 1
+                    done_batch.append(fpath)
+                    if len(done_batch) >= 100:
+                        self.db.mark_queue_done(scan_id, done_batch)
+                        done_batch.clear()
+                    _maybe_progress()
+                    _drain_nonblocking()
                     continue
 
                 semaphore.acquire()
@@ -250,40 +465,36 @@ class Scanner:
                     args=(fpath, decode_depth),
                     timeout=timeout,
                 )
-                future.add_done_callback(lambda _f: semaphore.release())
-                futures[future] = (fpath, pre_mtime, pre_size)
 
-            for future in as_completed(futures):
-                fpath, pre_mtime, pre_size = futures[future]
-                try:
-                    result = future.result()
-                except FuturesTimeoutError:
-                    result = ValidationResult(
-                        status="error",
-                        error=f"validation timed out after {timeout}s",
-                        suggested_action="File may be severely corrupt",
-                    )
-                except Exception as e:
-                    result = ValidationResult(status="error", error=str(e))
+                _fp, _pm, _ps = fpath, pre_mtime, pre_size
 
-                # TOCTOU: discard if file changed during validation
-                try:
-                    post_stat = os.stat(fpath)
-                    if post_stat.st_mtime != pre_mtime or post_stat.st_size != pre_size:
-                        stats.toctou_discards += 1
-                        continue
-                except OSError:
-                    stats.toctou_discards += 1
-                    continue
+                def _on_done(f, fp=_fp, pm=_pm, ps=_ps) -> None:
+                    semaphore.release()
+                    result_q.put((f, fp, pm, ps))
 
-                self.db.record(
-                    fpath, pre_mtime, pre_size,
-                    result.status, scan_id=scan_id,
-                    error=result.error,
-                    suggested_action=result.suggested_action,
-                )
-                stats.record(result.status)
+                future.add_done_callback(_on_done)
+                _n_submitted += 1
+                _drain_nonblocking()
+
+            # Drain remaining results blocking until all submitted futures are accounted for
+            while _n_processed < _n_submitted:
+                f, fp, pm, ps = result_q.get()
+                _process_result(f, fp, pm, ps)
+                _n_processed += 1
 
             if self._shutdown.is_set():
                 pool.stop()
                 pool.join()
+
+        # Flush remaining done_batch
+        if done_batch:
+            self.db.mark_queue_done(scan_id, done_batch)
+
+        # Final progress line
+        if total_files > 0:
+            line = _progress_line(_processed, total_files, stats)
+            if is_tty:
+                sys.stderr.write(f"\r{line}\n")
+            else:
+                sys.stderr.write(line + "\n")
+            sys.stderr.flush()

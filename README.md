@@ -36,14 +36,32 @@ The only hard requirement is Python 3.12+. Install `ffmpeg` for video, `pillow-h
 sdog scan /mnt/photos
 ```
 
-Results go into a local SQLite database. When it finishes:
+Results go into a local SQLite database. Progress is printed to stderr every 5 seconds:
+
+```
+Discovered 15234 files.
+Scan ID: abc123-...  (resume with: sdog scan --resume abc123-...)
+  [1500/15234]  9.8%  ok:1498  corrupt:2  unreadable:0  43.1 f/s  ETA: ~3.2 min
+```
+
+When it finishes:
 
 ```bash
-sdog show-corrupt    # list broken files with error details
-sdog show-stats      # count by status: ok, corrupt, unreadable...
+sdog show-stats      # health dashboard — "is everything OK?" aggregate view
+sdog report          # drill-down — lists individual corrupt files with error details
 ```
 
 Exit code is `0` if everything is clean, `2` if issues were found — works naturally in scripts and CI.
+
+### Resuming an interrupted scan
+
+If a scan is interrupted (Ctrl+C, SIGTERM, crash), it stays resumable:
+
+```bash
+sdog scan --resume abc123-...
+```
+
+Use `sdog list-scans` to find incomplete scan IDs.
 
 ---
 
@@ -135,14 +153,20 @@ Once connected, you can ask Claude things like *"which photos are corrupt?"* or 
 
 ## Configuration
 
-Copy `config.example.yaml` and edit:
+Config is loaded automatically from the first location found:
+
+1. `./config.yaml` (current directory)
+2. `~/.config/semanticdog/config.yaml`
+3. `/data/config/config.yaml` (Docker/NAS default)
+
+Override with `--config /path/to/config.yaml` on any command.
 
 ```yaml
 paths:
   - /mnt/photos
   - /mnt/documents
 
-db_path: /data/state/state.db
+db_path: ~/.local/share/semanticdog/state.db   # or /data/state/state.db in Docker
 
 workers: 4        # parallel validators
 raw_workers: 2    # RAW uses more memory — keep lower than workers
@@ -228,7 +252,7 @@ tests/
 
 ### CLI exit codes
 
-`sdog scan`: `0` = all OK · `1` = config/DB error · `2` = corrupt or unreadable files found  
+`sdog scan`: `0` = all OK · `1` = config/DB/scan error · `2` = corrupt or unreadable files found · `130` = interrupted (Ctrl+C)  
 `sdog check-deps`: `0` = all hard deps present · `1` = hard dep missing
 
 ### HTTP API
@@ -280,10 +304,14 @@ files (
 )
 scans (
   id TEXT PRIMARY KEY,
-  started_at TEXT, finished_at TEXT,
+  started_at TEXT, finished_at TEXT,  -- finished_at NULL = incomplete/resumable
   total INTEGER, corrupt INTEGER, unreadable INTEGER,
   scope TEXT,            -- NULL = all paths
   files_per_sec REAL
+)
+scan_queue (
+  scan_id TEXT, path TEXT,
+  done INTEGER DEFAULT 0  -- 0 = pending, 1 = complete
 )
 ```
 
@@ -294,13 +322,20 @@ from semanticdog.config import load_config
 from semanticdog.db import Database
 from semanticdog.scanner import Scanner
 
-cfg   = load_config("config.yaml")       # YAML + env override
+cfg   = load_config("config.yaml")                        # YAML + env override
 db    = Database(cfg.db_path)
-stats = Scanner(cfg, db).scan()          # all paths → ScanStats
-stats = Scanner(cfg, db).scan(["/sub"])  # scoped scan
+stats = Scanner(cfg, db).scan()                           # all paths → ScanStats
+stats = Scanner(cfg, db).scan(["/sub"])                   # scoped scan
+stats = Scanner(cfg, db).scan(resume_scan_id="abc123-…") # resume interrupted scan
+
+# stats.scan_id — ID of the scan just run (for resume)
 
 db.get_corrupt_files(since="2025-01-01", ext="cr2", path_prefix="/mnt")
-db.get_stats()         # {"total": N, "by_status": {...}}
+db.get_stats()         # {"total": N, "total_size_bytes": N, "by_status": {...}}
+db.get_format_counts() # [(ext, count), ...] sorted by count
+db.get_stale_count(days=90)
+db.get_top_errors(limit=5)
+db.get_scan(scan_id)   # single scan record dict
 db.list_scans(limit=10)
 db.export_json()
 db.import_json(records, force=False, path_map={"/old": "/new"})
@@ -310,7 +345,7 @@ db.import_json(records, force=False, path_map={"/old": "/new"})
 
 ```bash
 uv run pytest                       # 427 tests
-uv run pytest tests/test_e2e.py -v  # E2E only (37 tests, real files)
+uv run pytest tests/test_e2e.py -v  # E2E only (real files, no mocks)
 ```
 
 ### Known limitations

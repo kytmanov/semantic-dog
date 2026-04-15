@@ -142,7 +142,7 @@ async def trigger(request: Request) -> JSONResponse:
 
     async with _scan_lock:
         _last_trigger_time = time.monotonic()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         from .scanner import Scanner
 
         def _run_scan() -> str:

@@ -198,6 +198,12 @@ class WebhookNotifier:
         if not self.cfg.webhook_url:
             return
 
+        allow_private = getattr(self.cfg, "webhook_allow_private", False)
+        try:
+            validate_webhook_url(self.cfg.webhook_url, allow_private=allow_private)
+        except ValueError as e:
+            raise RuntimeError(f"Webhook URL rejected: {e}") from e
+
         import json
         body = _build_message(summary)
         payload = json.dumps({

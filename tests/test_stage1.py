@@ -190,8 +190,8 @@ class TestCliSkeleton:
         assert "--strict" in out
 
     def test_scan_exits_nonzero_without_config(self):
-        # scan without config or SDOG_PATHS fails with config error
-        result = runner.invoke(app, ["scan"])
+        # explicit nonexistent config path must fail with config error
+        result = runner.invoke(app, ["scan", "--config", "/nonexistent/path/config.yaml"])
         assert result.exit_code != 0
 
     def test_db_import_has_force_flag(self):
