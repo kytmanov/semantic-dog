@@ -330,20 +330,28 @@ function initScheduleField() {
   const description = document.getElementById('schedule-description');
   if (!input || !preset || !description) return;
 
+  let customMode = false;
+
   function syncFromValue() {
     const current = String(input.value || '').trim();
-    const selected = matchingSchedulePreset(current);
+    const selected = customMode ? '__custom__' : matchingSchedulePreset(current);
     if (preset.value !== selected) preset.value = selected;
-    input.readOnly = preset.value !== '__custom__';
+    input.readOnly = !customMode;
     description.textContent = scheduleDescription(current);
   }
 
   preset.addEventListener('change', () => {
-    if (preset.value !== '__custom__') input.value = preset.value;
+    customMode = preset.value === '__custom__';
+    if (!customMode) input.value = preset.value;
     syncFromValue();
   });
 
-  input.addEventListener('input', syncFromValue);
+  input.addEventListener('input', () => {
+    customMode = true;
+    syncFromValue();
+  });
+
+  customMode = matchingSchedulePreset(String(input.value || '').trim()) === '__custom__';
   syncFromValue();
 }
 

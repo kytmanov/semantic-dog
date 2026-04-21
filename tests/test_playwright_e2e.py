@@ -95,6 +95,14 @@ def test_user_can_add_second_root_then_run_scan_from_dashboard(tmp_path: Path):
             expect(scan_roots).to_have_value(str(library_a))
             expect(page.locator("#schedule-preset")).to_have_value("0 2 * * *")
             expect(page.locator("#schedule-description")).to_have_text("Runs every day at 2:00 AM.")
+            page.locator("#schedule-preset").select_option("__custom__")
+            expect(page.locator("#schedule-preset")).to_have_value("__custom__")
+            assert page.locator("#schedule-input").evaluate("(el) => el.readOnly") is False
+            page.locator("#schedule-input").fill("15 3 * * 1")
+            expect(page.locator("#schedule-input")).to_have_value("15 3 * * 1")
+            expect(page.locator("#schedule-description")).to_have_text(
+                "Custom cron schedule. Uses 5 fields: minute hour day-of-month month day-of-week."
+            )
             page.locator("#schedule-preset").select_option("0 */6 * * *")
             expect(page.locator("#schedule-input")).to_have_value("0 */6 * * *")
             expect(page.locator("#schedule-description")).to_have_text("Runs every 6 hours at minute 00.")
