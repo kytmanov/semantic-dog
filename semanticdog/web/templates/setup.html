@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>Setup</h1>
+  <p class="lead">Check configuration, storage paths, and runtime dependencies before running a scan.</p>
+</section>
+
+<section class="grid two-up">
+  <article class="panel">
+    <h2>Config</h2>
+    <p><strong>Path:</strong> {{ setup.config.path or "not detected" }}</p>
+    <p><strong>Exists:</strong> {{ "yes" if setup.config.exists else "no" }}</p>
+    <p><strong>Parent writable:</strong> {{ "yes" if setup.config.parent_writable else "no" }}</p>
+  </article>
+
+  <article class="panel">
+    <h2>Database</h2>
+    <p><strong>Path:</strong> {{ setup.db.path or "not configured" }}</p>
+    <p><strong>Parent exists:</strong> {{ "yes" if setup.db.parent_exists else "no" }}</p>
+    <p><strong>Parent writable:</strong> {{ "yes" if setup.db.parent_writable else "no" }}</p>
+  </article>
+ </section>
+
+<section class="panel">
+  <h2>Scan Roots</h2>
+  {% if setup.scan_roots %}
+  <ul class="simple-list">
+    {% for root in setup.scan_roots %}
+    <li>{{ root.path }} | exists={{ root.exists }} | dir={{ root.is_dir }} | readable={{ root.readable }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No scan roots configured yet.</p>
+  {% endif %}
+ </section>
+
+<section class="panel">
+  <h2>Warnings</h2>
+  {% if setup.warnings %}
+  <ul class="simple-list">
+    {% for warning in setup.warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No setup warnings detected.</p>
+  {% endif %}
+</section>
+{% endblock %}

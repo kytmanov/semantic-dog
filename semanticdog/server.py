@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from pathlib import Path
 import secrets
 import time
 from typing import Any, TYPE_CHECKING
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from .runtime import AppRuntime
 from .services.diagnostics import collect_setup_diagnostics
@@ -70,7 +73,7 @@ def _unconfigured_response(runtime: AppRuntime) -> JSONResponse:
 
 
 def _is_public_route(path: str) -> bool:
-    return path == "/health"
+    return path == "/health" or path.startswith("/static/")
 
 
 def _is_authorized(request: Request, runtime: AppRuntime) -> bool:
@@ -99,6 +102,10 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     target_app.state.runtime = runtime or AppRuntime()
     target_app.state.mcp_mounted = False
 
+    web_root = Path(__file__).parent / "web"
+    templates = Jinja2Templates(directory=str(web_root / "templates"))
+    target_app.mount("/static", StaticFiles(directory=str(web_root / "static")), name="static")
+
     _mount_mcp(target_app, target_app.state.runtime)
 
     @target_app.middleware("http")
@@ -118,6 +125,53 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     @target_app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @target_app.get("/")
+    async def index(request: Request):
+        runtime = _get_runtime(request)
+        setup = collect_setup_diagnostics(runtime)
+        status_payload = await status(request)
+        if runtime.config_error or not setup["scan_roots"]:
+            return templates.TemplateResponse(
+                request,
+                "setup.html",
+                {"title": "SemanticDog Setup", "setup": setup},
+            )
+        return templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {
+                "title": "SemanticDog Dashboard",
+                "status": status_payload,
+                "setup": setup,
+                "current_scan": status_payload.get("current_scan"),
+            },
+        )
+
+    @target_app.get("/dashboard")
+    async def dashboard(request: Request):
+        runtime = _get_runtime(request)
+        setup = collect_setup_diagnostics(runtime)
+        status_payload = await status(request)
+        return templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {
+                "title": "SemanticDog Dashboard",
+                "status": status_payload,
+                "setup": setup,
+                "current_scan": status_payload.get("current_scan"),
+            },
+        )
+
+    @target_app.get("/setup")
+    async def setup_page(request: Request):
+        runtime = _get_runtime(request)
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"title": "SemanticDog Setup", "setup": collect_setup_diagnostics(runtime)},
+        )
 
     # -----------------------------------------------------------------------
     # /metrics  (Prometheus text format)

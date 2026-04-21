@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "SemanticDog" }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="shell-header">
+    <div>
+      <a class="brand" href="/">SemanticDog</a>
+      <p class="tagline">Semantic integrity checks for NAS libraries</p>
+    </div>
+    <nav class="shell-nav">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/setup">Setup</a>
+    </nav>
+  </header>
+  <main class="shell-main">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

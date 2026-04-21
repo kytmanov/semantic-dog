@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>Dashboard</h1>
+  <p class="lead">Monitor library health, scan progress, and recent issues from one place.</p>
+</section>
+
+<section class="grid">
+  <article class="panel stat-card">
+    <h2>Runtime</h2>
+    <p><strong>Status:</strong> <span id="runtime-status">{{ status.status }}</span></p>
+    <p><strong>Files indexed:</strong> <span id="files-indexed">{{ status.files_indexed }}</span></p>
+  </article>
+
+  <article class="panel stat-card">
+    <h2>Last Scan</h2>
+    {% if status.last_scan %}
+    <p><strong>Scan ID:</strong> {{ status.last_scan.id }}</p>
+    <p><strong>Total:</strong> {{ status.last_scan.total }}</p>
+    {% else %}
+    <p>No scans recorded yet.</p>
+    {% endif %}
+  </article>
+
+  <article class="panel stat-card">
+    <h2>API</h2>
+    <p><strong>Current scan:</strong> <span id="current-scan">{% if current_scan %}{{ current_scan.scan_id }}{% else %}none{% endif %}</span></p>
+    <p><strong>Setup warnings:</strong> <span id="setup-warning-count">{{ setup.warnings | length }}</span></p>
+  </article>
+</section>
+{% endblock %}
