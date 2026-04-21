@@ -1,71 +1,184 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="panel hero-panel">
-  <h1>Dashboard</h1>
-  <p class="lead">Monitor library health, scan progress, and recent issues from one place.</p>
-  <div class="status-banner">
-    <span class="badge" id="banner-state">{{ banner.state }}</span>
-    <p id="banner-detail">{{ banner.detail }}</p>
+
+{# ── Status hero ──────────────────────────────────────────── #}
+<div class="card">
+  <div class="status-hero">
+    <div>
+      <div class="status-row">
+        {% if banner.state == "Healthy" %}
+          <div id="status-dot" class="status-dot dot-green"></div>
+        {% elif banner.state == "Scan running" %}
+          <div id="status-dot" class="status-dot dot-blue"></div>
+        {% elif banner.state == "Issues found" %}
+          <div id="status-dot" class="status-dot dot-red"></div>
+        {% elif banner.state in ["Configuration needed", "Access problem suspected"] %}
+          <div id="status-dot" class="status-dot dot-amber"></div>
+        {% else %}
+          <div id="status-dot" class="status-dot dot-gray"></div>
+        {% endif %}
+        <span class="status-name" id="banner-state">{{ banner.state }}</span>
+      </div>
+      <div class="status-detail" id="banner-detail">{{ banner.detail }}</div>
+    </div>
+    <div class="row" style="gap:0.75rem; align-items:center; flex-shrink:0; flex-wrap:wrap;">
+      <span class="text-3" style="font-size:0.8125rem;">
+        <span id="files-indexed">{{ status.files_indexed | default(0) | int }}</span> files indexed
+        &nbsp;·&nbsp; <span id="runtime-status" style="display:none;">{{ status.status }}</span>
+      </span>
+      <button id="run-scan-btn" class="btn btn-primary btn-sm"
+        {% if status.status == 'scanning' %}disabled{% endif %}>
+        {% if status.status == 'scanning' %}Scan running…{% else %}Run Scan{% endif %}
+      </button>
+    </div>
   </div>
-</section>
+</div>
 
-<section class="grid">
-  <article class="panel stat-card">
-    <h2>Runtime</h2>
-    <p><strong>Status:</strong> <span id="runtime-status">{{ status.status }}</span></p>
-    <p><strong>Files indexed:</strong> <span id="files-indexed">{{ status.files_indexed }}</span></p>
-  </article>
+{# ── Stat cards ───────────────────────────────────────────── #}
+<div class="grid-3">
+  <div class="card" style="padding:1rem;">
+    <div class="card-label">OK</div>
+    <div class="stat-num text-green" id="count-ok">
+      {{ status.get("by_status", {}).get("ok", 0) | int }}
+    </div>
+    <div class="stat-label">files verified</div>
+  </div>
 
-  <article class="panel stat-card">
-    <h2>Library Health</h2>
-    <p><strong>OK:</strong> <span id="count-ok">{{ status.by_status.get("ok", 0) }}</span></p>
-    <p><strong>Corrupt:</strong> <span id="count-corrupt">{{ status.by_status.get("corrupt", 0) }}</span></p>
-    <p><strong>Unreadable:</strong> <span id="count-unreadable">{{ status.by_status.get("unreadable", 0) }}</span></p>
-  </article>
+  {% set n_corrupt    = status.get("by_status", {}).get("corrupt",    0) | int %}
+  {% set n_unreadable = status.get("by_status", {}).get("unreadable", 0) | int %}
 
-  <article class="panel stat-card">
-    <h2>Active Scan</h2>
-    {% if current_scan %}
-    <p><strong>Scan ID:</strong> <span id="current-scan">{{ current_scan.scan_id }}</span></p>
-    <p><strong>Processed:</strong> <span id="scan-processed">{{ current_scan.processed }}</span> / <span id="scan-total">{{ current_scan.discovered_total }}</span></p>
-    <p><strong>Rate:</strong> <span id="scan-rate">{{ "%.1f"|format(current_scan.files_per_sec) }}</span> files/sec</p>
-    {% else %}
-    <p><strong>Scan ID:</strong> <span id="current-scan">none</span></p>
-    <p><strong>Processed:</strong> <span id="scan-processed">0</span> / <span id="scan-total">0</span></p>
-    <p><strong>Rate:</strong> <span id="scan-rate">0.0</span> files/sec</p>
-    {% endif %}
-  </article>
+  <div class="card{% if n_corrupt > 0 %} card-danger{% endif %}" id="corrupt-card" style="padding:1rem;">
+    <div class="card-label">Corrupt</div>
+    <div class="stat-num {% if n_corrupt > 0 %}text-red{% else %}text-3{% endif %}" id="count-corrupt">
+      {{ n_corrupt }}
+    </div>
+    <div class="stat-label">
+      {% if n_corrupt > 0 %}
+        <a href="/issues" style="color:var(--red);">view issues →</a>
+      {% else %}
+        files corrupt
+      {% endif %}
+    </div>
+  </div>
 
-</section>
+  <div class="card{% if n_unreadable > 0 %} card-warn{% endif %}" id="unreadable-card" style="padding:1rem;">
+    <div class="card-label">Unreadable</div>
+    <div class="stat-num {% if n_unreadable > 0 %}text-amber{% else %}text-3{% endif %}" id="count-unreadable">
+      {{ n_unreadable }}
+    </div>
+    <div class="stat-label">
+      {% if n_unreadable > 0 %}
+        <a href="/issues" style="color:var(--amber);">view issues →</a>
+      {% else %}
+        files unreadable
+      {% endif %}
+    </div>
+  </div>
+</div>
 
-<section class="grid two-up">
-  <article class="panel">
-    <h2>Last Scan</h2>
-    {% if status.last_scan %}
-    <p><strong>Scan ID:</strong> {{ status.last_scan.id }}</p>
-    <p><strong>Scope:</strong> {{ status.last_scan.scope or "all configured paths" }}</p>
-    <p><strong>Total:</strong> {{ status.last_scan.total }}</p>
-    <p><strong>Corrupt:</strong> {{ status.last_scan.corrupt }}</p>
-    <p><strong>Unreadable:</strong> {{ status.last_scan.unreadable }}</p>
-    <p><strong>Finished:</strong> {{ status.last_scan.finished_at or "incomplete" }}</p>
-    {% else %}
-    <p>No scans recorded yet.</p>
-    {% endif %}
-  </article>
+{# ── Active scan (shown while scanning) ────────────────────── #}
+<div id="scan-progress-section"
+     style="{% if not current_scan or current_scan.state not in ['starting', 'running'] %}display:none;{% endif %}">
+  <div class="card">
+    <div class="row-between" style="margin-bottom:0.75rem;">
+      <div class="row">
+        <span class="badge badge-blue">Active Scan</span>
+        <span class="text-3 mono" style="font-size:0.6875rem;">
+          {% if current_scan %}{{ current_scan.scan_id[:8] }}…{% endif %}
+        </span>
+      </div>
+      <span class="text-3" style="font-size:0.75rem;" id="scan-eta">
+        {% if current_scan and current_scan.eta_s %}~{{ (current_scan.eta_s / 60) | round(0, 'ceil') | int }}m remaining{% endif %}
+      </span>
+    </div>
+    <div class="progress-track">
+      {% if current_scan and current_scan.discovered_total > 0 %}
+        {% set pct = [(current_scan.processed / current_scan.discovered_total * 100) | int, 100] | min %}
+      {% else %}
+        {% set pct = 0 %}
+      {% endif %}
+      <div class="progress-fill" id="progress-fill" style="width:{{ pct }}%"></div>
+    </div>
+    <div class="row-between" style="margin-top:0.5rem;">
+      <span class="text-3" style="font-size:0.75rem;" id="scan-count">
+        {% if current_scan %}
+          {{ current_scan.processed | default(0) }} / {{ current_scan.discovered_total | default(0) }}
+        {% else %}0 / 0{% endif %}
+      </span>
+      <span id="progress-pct" class="text-2" style="font-size:0.75rem; font-weight:600;">{{ pct }}%</span>
+      <span class="text-3" style="font-size:0.75rem;" id="scan-rate">
+        {% if current_scan %}{{ "%.1f"|format(current_scan.files_per_sec | default(0)) }} files/sec{% endif %}
+      </span>
+    </div>
+  </div>
+</div>
 
-  <article class="panel">
-    <h2>Action Needed</h2>
-    <p><strong>Setup warnings:</strong> <span id="setup-warning-count">{{ setup.warnings | length }}</span></p>
-    {% if setup.warnings %}
-    <ul class="simple-list warning-list" id="setup-warning-list">
-      {% for warning in setup.warnings[:5] %}
-      <li>{{ warning }}</li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p id="setup-warning-list">No setup warnings detected.</p>
-    {% endif %}
-  </article>
-</section>
+{# ── Idle: last scan + setup warnings ─────────────────────── #}
+<div id="scan-idle-section"
+     style="{% if current_scan and current_scan.state in ['starting', 'running'] %}display:none;{% endif %}">
+
+  {% set ls = status.get("last_scan") %}
+  {% if ls %}
+  <div class="card">
+    <div class="row-between">
+      <div class="col">
+        <div class="card-label">Last Scan</div>
+        <div class="row" style="gap:0.625rem; flex-wrap:wrap; margin-top:0.25rem;">
+          {% if ls.get("finished_at") %}
+            {% set had_issues = (ls.get("corrupt") or 0) + (ls.get("unreadable") or 0) %}
+            {% if had_issues > 0 %}
+              <span class="badge badge-red">{{ had_issues }} issue{{ 's' if had_issues != 1 else '' }}</span>
+            {% else %}
+              <span class="badge badge-green">Clean</span>
+            {% endif %}
+          {% else %}
+            <span class="badge badge-amber">Incomplete</span>
+          {% endif %}
+          <span class="text-2" style="font-size:0.8125rem;" data-time="{{ ls.get('started_at', '') }}">
+            {{ ls.get("started_at", "") }}
+          </span>
+        </div>
+        <div class="text-3 mono" style="font-size:0.75rem; margin-top:0.375rem;">
+          {{ ls.get("scope") or "all configured paths" }}
+        </div>
+      </div>
+      <div class="col" style="text-align:right; flex-shrink:0;">
+        <div class="stat-num text-1" style="font-size:1.375rem;">{{ ls.get("total", 0) | int }}</div>
+        <div class="stat-label">files checked</div>
+        {% if ls.get("files_per_sec") %}
+          <div class="text-3" style="font-size:0.75rem; margin-top:0.125rem;">
+            {{ "%.1f"|format(ls.get("files_per_sec")) }} files/sec
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="empty-state" style="padding:2rem 1rem;">
+      <div class="empty-icon">📂</div>
+      <div class="empty-title">No scans yet</div>
+      <div class="empty-desc">Run your first scan to establish a baseline for this library.</div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Setup warnings #}
+  {% if setup.warnings %}
+  <div class="alert alert-amber">
+    <span style="flex-shrink:0; font-size:0.875rem;">⚠</span>
+    <div>
+      <strong>Setup warnings</strong>
+      <ul class="alert-list">
+        {% for w in setup.warnings %}
+        <li>{{ w }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
 {% endblock %}

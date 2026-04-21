@@ -1,37 +1,108 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="panel hero-panel">
-  <h1>Issues</h1>
-  <p class="lead">Review corrupt and unreadable files, then decide whether the problem is data corruption or storage access.</p>
-</section>
 
-<section class="panel">
-  {% if issues %}
+<div class="row-between" style="margin-bottom:0.25rem;">
+  <div>
+    <div class="page-title">Issues</div>
+    <div class="page-sub">Corrupt and unreadable files that need attention.</div>
+  </div>
+</div>
+
+{% if issues %}
+
+{% set corrupt_count    = issues | selectattr('status', 'equalto', 'corrupt')    | list | length %}
+{% set unreadable_count = issues | selectattr('status', 'equalto', 'unreadable') | list | length %}
+
+<div class="card">
+  <div class="row-between" style="margin-bottom:1rem; flex-wrap:wrap; gap:0.625rem;">
+    <div class="filter-bar">
+      <button class="filter-btn active" data-filter="all">
+        All ({{ issues | length }})
+      </button>
+      <button class="filter-btn" data-filter="corrupt">
+        Corrupt ({{ corrupt_count }})
+      </button>
+      <button class="filter-btn" data-filter="unreadable">
+        Unreadable ({{ unreadable_count }})
+      </button>
+    </div>
+    <input type="search" id="issue-search" class="search-input" placeholder="Filter by path…">
+  </div>
+
   <div class="table-wrap">
     <table class="data-table">
       <thead>
         <tr>
-          <th>Status</th>
-          <th>Path</th>
+          <th style="width:100px;">Status</th>
+          <th>File</th>
           <th>Error</th>
           <th>Suggested Action</th>
+          <th style="width:90px;">Detected</th>
         </tr>
       </thead>
       <tbody>
         {% for issue in issues %}
-        <tr>
-          <td>{{ issue.status }}</td>
-          <td>{{ issue.path }}</td>
-          <td>{{ issue.error or "-" }}</td>
-          <td>{{ issue.suggested_action or "Investigate source and mount health" }}</td>
+        <tr class="issue-row" data-status="{{ issue.status }}" data-path="{{ issue.path }}">
+          <td>
+            {% if issue.status == 'corrupt' %}
+              <span class="badge badge-red">Corrupt</span>
+            {% else %}
+              <span class="badge badge-amber">Unreadable</span>
+            {% endif %}
+          </td>
+          <td style="max-width:380px;">
+            <div class="text-1" style="font-size:0.8125rem; font-weight:500; word-break:break-all;">
+              {{ issue.path.split('/')[-1] if '/' in issue.path else issue.path }}
+            </div>
+            <div class="text-3 mono" style="font-size:0.6875rem; margin-top:2px; word-break:break-all;">
+              {% set parts = issue.path.split('/') %}
+              {% if parts | length > 1 %}{{ '/'.join(parts[:-1]) }}/{% endif %}
+            </div>
+          </td>
+          <td style="max-width:260px;">
+            <span class="text-3" style="font-size:0.75rem; word-break:break-word; line-height:1.5;">
+              {{ issue.error or "—" }}
+            </span>
+          </td>
+          <td style="font-size:0.75rem; color:var(--t2); line-height:1.5;">
+            {{ issue.suggested_action or "Investigate source and mount health" }}
+          </td>
+          <td>
+            {% if issue.checked_at %}
+            <span class="text-3" style="font-size:0.6875rem;" data-time="{{ issue.checked_at }}">
+              {{ issue.checked_at }}
+            </span>
+            {% else %}
+            <span class="text-3">—</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% else %}
-  <p>No corrupt or unreadable files are currently recorded.</p>
-  {% endif %}
-</section>
+
+  <div id="issues-empty-filtered" style="display:none;">
+    <div class="empty-state" style="padding:2rem 1rem;">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">No matching issues</div>
+      <div class="empty-desc">Try a different filter or clear the search.</div>
+    </div>
+  </div>
+</div>
+
+{% else %}
+
+<div class="card">
+  <div class="empty-state">
+    <div class="empty-icon">✅</div>
+    <div class="empty-title">No issues found</div>
+    <div class="empty-desc">All scanned files passed integrity checks. Run a scan to check for new issues.</div>
+    <a href="/dashboard" class="btn btn-primary btn-sm" style="margin-top:0.75rem;">Back to Dashboard</a>
+  </div>
+</div>
+
+{% endif %}
+
 {% endblock %}

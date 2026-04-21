@@ -1,92 +1,158 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="panel">
-  <h1>Setup</h1>
-  <p class="lead">Check configuration, storage paths, and runtime dependencies before running a scan.</p>
-</section>
 
-<section class="grid two-up">
-  <article class="panel">
-    <h2>Config</h2>
-    <p><strong>Path:</strong> {{ setup.config.path or "not detected" }}</p>
-    <p><strong>Exists:</strong> {{ "yes" if setup.config.exists else "no" }}</p>
-    <p><strong>Parent writable:</strong> {{ "yes" if setup.config.parent_writable else "no" }}</p>
-  </article>
+<div class="row-between" style="margin-bottom:0.25rem;">
+  <div>
+    <div class="page-title">Setup</div>
+    <div class="page-sub">Verify configuration paths and runtime dependencies before scanning.</div>
+  </div>
+</div>
 
-  <article class="panel">
-    <h2>Database</h2>
-    <p><strong>Path:</strong> {{ setup.db.path or "not configured" }}</p>
-    <p><strong>Parent exists:</strong> {{ "yes" if setup.db.parent_exists else "no" }}</p>
-    <p><strong>Parent writable:</strong> {{ "yes" if setup.db.parent_writable else "no" }}</p>
-  </article>
- </section>
+{# ── Warnings ─────────────────────────────────────────────── #}
+{% if setup.warnings %}
+<div class="alert alert-amber">
+  <span style="flex-shrink:0;">⚠</span>
+  <div>
+    <strong>{{ setup.warnings | length }} warning{{ 's' if setup.warnings | length != 1 else '' }} detected</strong>
+    <ul class="alert-list">
+      {% for w in setup.warnings %}
+      <li>{{ w }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
 
-<section class="panel">
-  <h2>Scan Roots</h2>
+{# ── System checks ────────────────────────────────────────── #}
+<div class="grid-2">
+  {# Config file #}
+  <div class="card">
+    <div class="card-label">Config File</div>
+    <div class="diag-row">
+      <div class="diag-icon {% if setup.config.exists %}ok{% else %}error{% endif %}">
+        {% if setup.config.exists %}✓{% else %}✗{% endif %}
+      </div>
+      <div>
+        <div class="diag-name">{{ "Found" if setup.config.exists else "Not found" }}</div>
+        <div class="diag-value">{{ setup.config.path or "not detected" }}</div>
+      </div>
+    </div>
+    <div class="diag-row">
+      <div class="diag-icon {% if setup.config.parent_writable %}ok{% else %}warn{% endif %}">
+        {% if setup.config.parent_writable %}✓{% else %}!{% endif %}
+      </div>
+      <div>
+        <div class="diag-name">Directory {{ "writable" if setup.config.parent_writable else "not writable" }}</div>
+      </div>
+    </div>
+  </div>
+
+  {# Database #}
+  <div class="card">
+    <div class="card-label">Database</div>
+    <div class="diag-row">
+      <div class="diag-icon {% if setup.db.parent_exists %}ok{% else %}error{% endif %}">
+        {% if setup.db.parent_exists %}✓{% else %}✗{% endif %}
+      </div>
+      <div>
+        <div class="diag-name">Directory {{ "exists" if setup.db.parent_exists else "missing" }}</div>
+        <div class="diag-value">{{ setup.db.path or "not configured" }}</div>
+      </div>
+    </div>
+    <div class="diag-row">
+      <div class="diag-icon {% if setup.db.parent_writable %}ok{% else %}warn{% endif %}">
+        {% if setup.db.parent_writable %}✓{% else %}!{% endif %}
+      </div>
+      <div>
+        <div class="diag-name">Directory {{ "writable" if setup.db.parent_writable else "not writable" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Scan roots ───────────────────────────────────────────── #}
+<div class="card">
+  <div class="card-label">Scan Roots</div>
   {% if setup.scan_roots %}
-  <ul class="simple-list">
     {% for root in setup.scan_roots %}
-    <li>{{ root.path }} | exists={{ root.exists }} | dir={{ root.is_dir }} | readable={{ root.readable }}</li>
+    {% set all_ok = root.exists and root.is_dir and root.readable %}
+    <div class="diag-row">
+      <div class="diag-icon {% if all_ok %}ok{% elif root.exists %}warn{% else %}error{% endif %}">
+        {% if all_ok %}✓{% elif root.exists %}!{% else %}✗{% endif %}
+      </div>
+      <div>
+        <div class="diag-name mono" style="font-size:0.8125rem;">{{ root.path }}</div>
+        <div class="row" style="gap:0.5rem; margin-top:3px;">
+          {% if not root.exists %}
+            <span class="badge badge-red">not found</span>
+          {% elif not root.is_dir %}
+            <span class="badge badge-amber">not a directory</span>
+          {% elif not root.readable %}
+            <span class="badge badge-amber">not readable</span>
+          {% else %}
+            <span class="badge badge-green">accessible</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
     {% endfor %}
-  </ul>
   {% else %}
-  <p>No scan roots configured yet.</p>
+  <div class="text-3" style="font-size:0.8125rem; padding:0.5rem 0;">No scan roots configured yet.</div>
   {% endif %}
- </section>
+</div>
 
-<section class="panel">
-  <h2>Warnings</h2>
-  {% if setup.warnings %}
-  <ul class="simple-list">
-    {% for warning in setup.warnings %}
-    <li>{{ warning }}</li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p>No setup warnings detected.</p>
-  {% endif %}
-</section>
-
-<section class="panel">
-  <h2>First-Run Configuration</h2>
+{# ── First-run configuration form ─────────────────────────── #}
+<div class="card">
+  <div class="card-label" style="margin-bottom:1rem;">Quick Configuration</div>
   <form id="setup-form" class="settings-form" data-endpoint="/api/config">
-    <div class="form-grid two-up">
-      <label>
-        <span>Scan Roots</span>
-        <textarea name="paths" rows="4">{{ (config.effective.paths or []) | join('\n') }}</textarea>
-      </label>
+    <div class="form-section">
+      <div class="form-row-2">
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label class="form-label" for="f-paths">Scan Roots</label>
+          <textarea id="f-paths" name="paths" rows="3"
+            placeholder="/Volumes/home/Photos">{{ (config.effective.paths or []) | join('\n') }}</textarea>
+          <div class="form-hint">One container-visible path per line.</div>
+        </div>
 
-      <label>
-        <span>Database Path</span>
-        <input type="text" name="db_path" value="{{ config.effective.db_path }}">
-      </label>
+        <div class="form-group">
+          <label class="form-label" for="f-db">Database Path</label>
+          <input id="f-db" type="text" name="db_path"
+            value="{{ config.effective.db_path }}"
+            placeholder="/data/state/state.db">
+        </div>
 
-      <label>
-        <span>Workers</span>
-        <input type="number" name="workers" value="{{ config.effective.workers }}">
-      </label>
+        <div class="form-group">
+          <label class="form-label" for="f-workers">Workers</label>
+          <input id="f-workers" type="number" name="workers"
+            value="{{ config.effective.workers }}" min="1" max="32">
+        </div>
 
-      <label>
-        <span>RAW Workers</span>
-        <input type="number" name="raw_workers" value="{{ config.effective.raw_workers }}">
-      </label>
+        <div class="form-group">
+          <label class="form-label" for="f-raw">RAW Workers</label>
+          <input id="f-raw" type="number" name="raw_workers"
+            value="{{ config.effective.raw_workers }}" min="1" max="16">
+        </div>
 
-      <label>
-        <span>Validation Timeout</span>
-        <input type="number" name="validation_timeout_s" value="{{ config.effective.validation_timeout_s }}">
-      </label>
+        <div class="form-group">
+          <label class="form-label" for="f-timeout">Validation Timeout (s)</label>
+          <input id="f-timeout" type="number" name="validation_timeout_s"
+            value="{{ config.effective.validation_timeout_s }}" min="10">
+        </div>
 
-      <label>
-        <span>Force Recheck Days</span>
-        <input type="number" name="force_recheck_days" value="{{ config.effective.force_recheck_days }}">
-      </label>
+        <div class="form-group">
+          <label class="form-label" for="f-recheck">Force Recheck (days)</label>
+          <input id="f-recheck" type="number" name="force_recheck_days"
+            value="{{ config.effective.force_recheck_days }}" min="1">
+        </div>
+      </div>
     </div>
 
     <div class="form-actions">
-      <button type="submit">Save Setup</button>
-      <p id="setup-feedback" class="form-feedback"></p>
+      <button type="submit" class="btn btn-primary">Save Configuration</button>
+      <span class="form-feedback" id="setup-feedback"></span>
     </div>
   </form>
-</section>
+</div>
+
 {% endblock %}

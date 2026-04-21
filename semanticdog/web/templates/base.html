@@ -7,22 +7,23 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="shell-header">
-    <div>
-      <a class="brand" href="/">SemanticDog</a>
-      <p class="tagline">Semantic integrity checks for NAS libraries</p>
-    </div>
-    <nav class="shell-nav">
-      <a href="/dashboard">Dashboard</a>
-      <a href="/setup">Setup</a>
-      <a href="/config">Config</a>
-      <a href="/issues">Issues</a>
-      <a href="/history">History</a>
+  <header class="header">
+    <a href="/" class="brand">SemanticDog</a>
+    <nav class="nav">
+      {% set p = request.url.path %}
+      <a href="/dashboard" class="nav-link{% if p in ['/', '/dashboard'] %} active{% endif %}">Dashboard</a>
+      <a href="/setup"     class="nav-link{% if p == '/setup'     %} active{% endif %}">Setup</a>
+      <a href="/config"    class="nav-link{% if p == '/config'    %} active{% endif %}">Config</a>
+      <a href="/issues"    class="nav-link{% if p == '/issues'    %} active{% endif %}">Issues</a>
+      <a href="/history"   class="nav-link{% if p == '/history'   %} active{% endif %}">History</a>
     </nav>
   </header>
-  <main class="shell-main">
+
+  <main class="main">
     {% block content %}{% endblock %}
   </main>
+
+  <div id="toast-container"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>
