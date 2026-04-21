@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from unittest.mock import MagicMock, patch
@@ -15,6 +14,8 @@ from semanticdog.server import app, build_app, create_app
 from semanticdog.config import Config
 from semanticdog.db import Database
 from semanticdog.runtime import AppRuntime
+from semanticdog.scanner import ScanProgressSnapshot
+from semanticdog.services.scan_manager import ScanManager
 
 
 # ---------------------------------------------------------------------------
@@ -28,12 +29,6 @@ def _reset_server_state():
     server_module._db = None
     server_module._last_trigger_time = 0.0
     server_module.app.state.runtime = AppRuntime()
-    # Reset lock in case previous test left it locked
-    if server_module._scan_lock.locked():
-        try:
-            server_module._scan_lock.release()
-        except RuntimeError:
-            pass
     yield
     server_module._cfg = None
     server_module._db = None
@@ -111,6 +106,34 @@ class TestStatusEndpoint:
         assert r.status_code == 200
         assert r.json()["status"] == "idle"
 
+    async def test_status_reports_current_scan(self, configured_app, tmp_path):
+        runtime = app.state.runtime
+        snapshot = ScanProgressSnapshot(
+            state="running",
+            scan_id="scan-1",
+            scope=str(tmp_path),
+            discovered_total=10,
+            processed=2,
+            skipped=0,
+            ok=2,
+            corrupt=0,
+            unreadable=0,
+            unsupported=0,
+            error=0,
+            files_per_sec=1.5,
+            eta_s=5.0,
+            started_at="2026-01-01T00:00:00+00:00",
+            finished_at=None,
+        )
+        runtime.scan_manager._current_snapshot = snapshot
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/status")
+
+        assert r.status_code == 200
+        assert r.json()["status"] == "scanning"
+        assert r.json()["current_scan"]["scan_id"] == "scan-1"
+
     async def test_status_degraded(self):
         degraded_app = create_app(AppRuntime(config_error="bad config"))
         async with AsyncClient(transport=ASGITransport(app=degraded_app), base_url="http://test") as c:
@@ -132,9 +155,29 @@ class TestStatusEndpoint:
 
 class TestTriggerEndpoint:
     async def test_trigger_returns_409_when_locked(self, configured_app):
-        async with server_module._scan_lock:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                r = await c.post("/trigger")
+        snapshot = ScanProgressSnapshot(
+            state="running",
+            scan_id="scan-1",
+            scope=None,
+            discovered_total=1,
+            processed=0,
+            skipped=0,
+            ok=0,
+            corrupt=0,
+            unreadable=0,
+            unsupported=0,
+            error=0,
+            files_per_sec=0.0,
+            eta_s=None,
+            started_at="2026-01-01T00:00:00+00:00",
+            finished_at=None,
+        )
+        runtime = app.state.runtime
+        runtime.scan_manager._current_snapshot = snapshot
+        runtime.scan_manager._active_future = MagicMock(done=MagicMock(return_value=False))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/trigger")
         assert r.status_code == 409
         assert r.json()["error"] == "scan already running"
 
@@ -151,15 +194,36 @@ class TestTriggerEndpoint:
         assert r.json()["config_error"] == "bad config"
 
     async def test_trigger_runs_scan(self, configured_app, tmp_path, cfg):
-        from tests.fixtures.generators import make_minimal_jpeg
-        make_minimal_jpeg(tmp_path / "img.jpg")
+        result = {"accepted": True, "scan_id": None}
+
+        def _fake_start(scope=None):
+            app.state.runtime.scan_manager._current_snapshot = ScanProgressSnapshot(
+                state="starting",
+                scan_id="scan-123",
+                scope=scope,
+                discovered_total=0,
+                processed=0,
+                skipped=0,
+                ok=0,
+                corrupt=0,
+                unreadable=0,
+                unsupported=0,
+                error=0,
+                files_per_sec=0.0,
+                eta_s=None,
+                started_at="2026-01-01T00:00:00+00:00",
+                finished_at=None,
+            )
+            return type("Result", (), result)()
+
+        app.state.runtime.scan_manager.start = _fake_start
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.post("/trigger")
         assert r.status_code == 200
         data = r.json()
-        assert data["status"] == "complete"
-        assert "scan_id" in data
+        assert data["status"] == "started"
+        assert data["scan_id"] == "scan-123"
 
     async def test_trigger_cooldown_returns_429(self, configured_app):
         server_module._last_trigger_time = time.monotonic()  # simulate recent trigger
@@ -187,6 +251,7 @@ class TestBuildApp:
         assert server_module._db is db
         assert app.state.runtime.cfg is cfg
         assert app.state.runtime.db is db
+        assert app.state.runtime.scan_manager is not None
 
     def test_build_app_returns_fastapi(self, cfg, db):
         from fastapi import FastAPI
@@ -200,25 +265,7 @@ class TestBuildApp:
         assert "/mcp/sse" not in route_paths
 
 
-# ---------------------------------------------------------------------------
-# Scan lock is asyncio.Lock
-# ---------------------------------------------------------------------------
-
-class TestScanLock:
-    def test_scan_lock_is_asyncio_lock(self):
-        assert isinstance(server_module._scan_lock, asyncio.Lock)
-
-    async def test_lock_prevents_concurrent_trigger(self, configured_app):
-        """Two concurrent /trigger calls — second gets 409."""
-        results = []
-
-        async def _call():
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                r = await c.post("/trigger")
-                results.append(r.status_code)
-
-        # Hold lock, then fire two requests
-        async with server_module._scan_lock:
-            await asyncio.gather(_call(), _call())
-
-        assert 409 in results
+class TestScanManagerWiring:
+    def test_build_app_initializes_scan_manager(self, cfg, db):
+        build_app(cfg, db)
+        assert isinstance(app.state.runtime.scan_manager, ScanManager)

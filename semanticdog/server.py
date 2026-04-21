@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -26,7 +25,6 @@ app = FastAPI(title="SemanticDog", version="0.1.0")
 # Route handlers use request.app.state.runtime instead.
 _cfg: "Config | None" = None
 _db: "Database | None" = None
-_scan_lock = asyncio.Lock()
 _last_trigger_time: float = 0.0
 
 
@@ -146,11 +144,14 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             stats = db.get_stats()
             scans = db.list_scans(limit=1)
             last_scan = scans[0] if scans else None
+            manager = runtime.scan_manager
+            current_scan = manager.current_snapshot() if manager is not None else None
             return {
-                "status": "scanning" if _scan_lock.locked() else "idle",
+                "status": "scanning" if current_scan and current_scan.state in {"starting", "running"} else "idle",
                 "files_indexed": stats.get("total", 0),
                 "by_status": stats.get("by_status", {}),
                 "last_scan": last_scan,
+                "current_scan": None if current_scan is None else current_scan.__dict__,
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
@@ -166,13 +167,16 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
         runtime = _get_runtime(request)
         cfg = runtime.cfg
         db = runtime.db
+        manager = runtime.scan_manager
 
-        if _scan_lock.locked():
-            scans = db.list_scans(limit=1) if db else []
-            running_id = scans[0]["id"] if scans else None
+        if manager is not None and manager.is_running():
+            current = manager.current_snapshot()
             return JSONResponse(
                 status_code=409,
-                content={"error": "scan already running", "scan_id": running_id},
+                content={
+                    "error": "scan already running",
+                    "scan_id": current.scan_id if current else None,
+                },
             )
 
         if cfg is not None:
@@ -185,7 +189,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                     content={"error": "cooldown active", "retry_after_s": retry_after},
                 )
 
-        if not runtime.ready or cfg is None or db is None:
+        if not runtime.ready or cfg is None or db is None or manager is None:
             return _unconfigured_response(runtime)
 
         body = {}
@@ -200,23 +204,24 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 content={"error": f"scope {scope!r} is not under a configured scan root"},
             )
 
-        async with _scan_lock:
-            _last_trigger_time = time.monotonic()
-            loop = asyncio.get_running_loop()
-            from .scanner import Scanner
+        _last_trigger_time = time.monotonic()
+        result = manager.start(scope=scope)
+        if not result.accepted:
+            return JSONResponse(
+                status_code=409,
+                content={"error": result.error or "scan already running", "scan_id": result.scan_id},
+            )
 
-            def _run_scan() -> str:
-                scanner = Scanner(cfg, db)
-                paths = [scope] if scope else None
-                scanner.scan(paths)
-                scans = db.list_scans(limit=1)
-                return scans[0]["id"] if scans else "unknown"
+        deadline = time.monotonic() + 1.0
+        scan_id = None
+        while time.monotonic() < deadline:
+            current = manager.current_snapshot()
+            if current is not None:
+                scan_id = current.scan_id
+                break
+            time.sleep(0.01)
 
-            try:
-                scan_id = await loop.run_in_executor(None, _run_scan)
-                return JSONResponse({"status": "complete", "scan_id": scan_id})
-            except Exception as e:
-                return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse({"status": "started", "scan_id": scan_id})
 
     return target_app
 
@@ -230,7 +235,9 @@ def build_app(cfg: "Config", db: "Database") -> FastAPI:
     _cfg = cfg
     _db = db
 
-    runtime = AppRuntime(cfg=cfg, db=db)
+    from .services.scan_manager import ScanManager
+
+    runtime = AppRuntime(cfg=cfg, db=db, scan_manager=ScanManager(cfg, db))
     app.state.runtime = runtime
     _mount_mcp(app, runtime)
     return app

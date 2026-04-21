@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -69,11 +71,6 @@ def _reset_server():
     server_module._db = None
     server_module._last_trigger_time = 0.0
     server_module.app.state.runtime = AppRuntime()
-    if server_module._scan_lock.locked():
-        try:
-            server_module._scan_lock.release()
-        except RuntimeError:
-            pass
     yield
     server_module._cfg = None
     server_module._db = None
@@ -412,17 +409,25 @@ class TestHttpServerE2E:
         async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
             r = await c.post("/trigger")
             assert r.status_code == 200
-            assert r.json()["status"] == "complete"
-            r2 = await c.get("/status")
+            assert r.json()["status"] == "started"
+
+            deadline = time.time() + 5
+            while True:
+                r2 = await c.get("/status")
+                if r2.json()["files_indexed"] >= 1 or time.time() >= deadline:
+                    break
+                await asyncio.sleep(0.05)
         assert r2.json()["files_indexed"] >= 1
 
     async def test_trigger_409_while_scanning(self, tmp_path):
         cfg = _cfg(tmp_path)
         db = Database(cfg.db_path)
         build_app(cfg, db)
-        async with server_module._scan_lock:
-            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
-                r = await c.post("/trigger")
+        runtime = http_app.state.runtime
+        runtime.scan_manager._current_snapshot = type("Snapshot", (), {"scan_id": "scan-1", "state": "running"})()
+        runtime.scan_manager._active_future = type("FutureStub", (), {"done": lambda self: False})()
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            r = await c.post("/trigger")
         assert r.status_code == 409
 
     async def test_metrics_shows_file_counts(self, tmp_path):
@@ -432,6 +437,9 @@ class TestHttpServerE2E:
         build_app(cfg, db)
         async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
             await c.post("/trigger")
+            deadline = time.time() + 5
+            while db.get_stats()["total"] == 0 and time.time() < deadline:
+                await asyncio.sleep(0.05)
             r = await c.get("/metrics")
         assert r.status_code == 200
         assert "sdog_files_total" in r.text
@@ -444,6 +452,9 @@ class TestHttpServerE2E:
         async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
             r = await c.post("/trigger")
         assert r.status_code == 200
+        deadline = time.time() + 5
+        while db.get_corrupt_files() == [] and time.time() < deadline:
+            await asyncio.sleep(0.05)
         assert db.get_corrupt_files() != []
 
 

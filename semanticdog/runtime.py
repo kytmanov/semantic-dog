@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from .config import Config, load_config
 
 if TYPE_CHECKING:
     from .db import Database
+    from .services.scan_manager import ScanManager
 
 
 @dataclass
@@ -20,7 +21,7 @@ class AppRuntime:
     db: "Database | None" = None
     config_error: str | None = None
     db_error: str | None = None
-    scan_manager: Any | None = None
+    scan_manager: "ScanManager | None" = None
 
     @property
     def ready(self) -> bool:
@@ -57,8 +58,10 @@ def load_runtime(config_path: str | None = None) -> AppRuntime:
 
     try:
         from .db import Database
+        from .services.scan_manager import ScanManager
 
         runtime.db = Database(cfg.db_path)
+        runtime.scan_manager = ScanManager(cfg, runtime.db)
     except Exception as e:
         runtime.db_error = str(e)
 
