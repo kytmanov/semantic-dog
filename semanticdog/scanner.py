@@ -11,8 +11,9 @@ import time
 import uuid
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 from wcmatch import fnmatch as wfn
 
@@ -102,6 +103,29 @@ class ScanStats:
             self.error += 1
 
 
+@dataclass
+class ScanProgressSnapshot:
+    state: str
+    scan_id: str
+    scope: str | None
+    discovered_total: int
+    processed: int
+    skipped: int
+    ok: int
+    corrupt: int
+    unreadable: int
+    unsupported: int
+    error: int
+    files_per_sec: float
+    eta_s: float | None
+    started_at: str | None
+    finished_at: str | None
+    last_error: str | None = None
+
+
+ProgressCallback = Callable[[ScanProgressSnapshot], None]
+
+
 # ---------------------------------------------------------------------------
 # File walker
 # ---------------------------------------------------------------------------
@@ -188,6 +212,68 @@ class Scanner:
         self._shutdown = threading.Event()
         self._boot_uuid = str(uuid.uuid4())
 
+    def _make_snapshot(
+        self,
+        *,
+        state: str,
+        stats: ScanStats,
+        scope: str | None,
+        discovered_total: int,
+        processed: int,
+        started_at: str | None,
+        finished_at: str | None = None,
+        last_error: str | None = None,
+    ) -> ScanProgressSnapshot:
+        fps = stats.files_per_sec()
+        remaining = max(discovered_total - processed, 0)
+        eta_s = (remaining / fps) if fps > 0 and remaining > 0 else None
+        return ScanProgressSnapshot(
+            state=state,
+            scan_id=stats.scan_id,
+            scope=scope,
+            discovered_total=discovered_total,
+            processed=processed,
+            skipped=stats.skipped,
+            ok=stats.ok,
+            corrupt=stats.corrupt,
+            unreadable=stats.unreadable,
+            unsupported=stats.unsupported,
+            error=stats.error,
+            files_per_sec=fps,
+            eta_s=eta_s,
+            started_at=started_at,
+            finished_at=finished_at,
+            last_error=last_error,
+        )
+
+    def _emit_progress(
+        self,
+        callback: ProgressCallback | None,
+        *,
+        state: str,
+        stats: ScanStats,
+        scope: str | None,
+        discovered_total: int,
+        processed: int,
+        started_at: str | None,
+        finished_at: str | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        if callback is None:
+            return
+        callback(
+            self._make_snapshot(
+                state=state,
+                stats=stats,
+                scope=scope,
+                discovered_total=discovered_total,
+                processed=processed,
+                started_at=started_at,
+                finished_at=finished_at,
+                last_error=last_error,
+            )
+        )
+
     def _install_sigterm(self) -> None:
         import threading
         if threading.current_thread() is not threading.main_thread():
@@ -211,6 +297,7 @@ class Scanner:
         self,
         paths: list[str] | None = None,
         resume_scan_id: str | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> ScanStats:
         """Run a full scan or resume an interrupted one. Returns ScanStats."""
         from pebble import ProcessPool  # noqa: F401 — ensures pebble available
@@ -222,6 +309,11 @@ class Scanner:
         mp_ctx = multiprocessing.get_context("spawn")
         is_tty = sys.stderr.isatty()
         interrupted = False
+        failed = False
+        started_at = datetime.now(timezone.utc).isoformat()
+        scope: str | None = None
+        total_files = 0
+        processed_count = 0
 
         if resume_scan_id:
             # ---- Resume path ----
@@ -251,6 +343,7 @@ class Scanner:
             )
 
             pending_paths = self.db.get_all_pending_paths(scan_id)
+            scope = existing.get("scope")
             sys.stderr.write(
                 f"Resuming scan {scan_id}\n"
                 f"Pending files: {len(pending_paths)}\n"
@@ -269,7 +362,8 @@ class Scanner:
         else:
             # ---- New scan path ----
             scan_paths = paths or self.config.paths
-            scan_id = self.db.create_scan(scope=",".join(scan_paths))
+            scope = ",".join(scan_paths)
+            scan_id = self.db.create_scan(scope=scope)
             stats = ScanStats(scan_id=scan_id)
 
             file_list = walk_paths(scan_paths, self.config.follow_symlinks, self.config.exclude)
@@ -292,16 +386,73 @@ class Scanner:
         high_files = [(p, m, s) for p, m, s in file_list if Path(p).suffix.lower() in high_exts]
         low_files  = [(p, m, s) for p, m, s in file_list if Path(p).suffix.lower() not in high_exts]
         total_files = len(file_list)
+        self._emit_progress(
+            progress_callback,
+            state="starting",
+            stats=stats,
+            scope=scope,
+            discovered_total=total_files,
+            processed=processed_count,
+            started_at=started_at,
+        )
 
         try:
-            self._run_pool(low_files, scan_id, stats, self.config.workers, mp_ctx, total_files, is_tty)
+            processed_count = self._run_pool(
+                low_files,
+                scan_id,
+                stats,
+                self.config.workers,
+                mp_ctx,
+                total_files,
+                is_tty,
+                scope=scope,
+                started_at=started_at,
+                initial_processed=processed_count,
+                progress_callback=progress_callback,
+            )
             if not self._shutdown.is_set():
-                self._run_pool(high_files, scan_id, stats, self.config.raw_workers, mp_ctx, total_files, is_tty)
+                processed_count = self._run_pool(
+                    high_files,
+                    scan_id,
+                    stats,
+                    self.config.raw_workers,
+                    mp_ctx,
+                    total_files,
+                    is_tty,
+                    scope=scope,
+                    started_at=started_at,
+                    initial_processed=processed_count,
+                    progress_callback=progress_callback,
+                )
         except KeyboardInterrupt:
             interrupted = True
             self._shutdown.set()
+            self._emit_progress(
+                progress_callback,
+                state="interrupted",
+                stats=stats,
+                scope=scope,
+                discovered_total=total_files,
+                processed=processed_count,
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception as e:
+            self._emit_progress(
+                progress_callback,
+                state="failed",
+                stats=stats,
+                scope=scope,
+                discovered_total=total_files,
+                processed=processed_count,
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                last_error=str(e),
+            )
+            failed = True
+            raise
         finally:
-            if not interrupted and not self._shutdown.is_set():
+            if not interrupted and not self._shutdown.is_set() and not failed:
                 self.db.finish_scan(
                     scan_id,
                     total=stats.total,
@@ -310,11 +461,32 @@ class Scanner:
                     files_per_sec=stats.files_per_sec(),
                 )
                 self.db.cleanup_scan_queue(scan_id)
-            else:
+                self._emit_progress(
+                    progress_callback,
+                    state="completed",
+                    stats=stats,
+                    scope=scope,
+                    discovered_total=total_files,
+                    processed=processed_count,
+                    started_at=started_at,
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
+            elif not failed:
                 sys.stderr.write(
                     f"\nInterrupted. Resume with: sdog scan --resume {scan_id}\n"
                 )
                 sys.stderr.flush()
+                if not interrupted:
+                    self._emit_progress(
+                        progress_callback,
+                        state="interrupted",
+                        stats=stats,
+                        scope=scope,
+                        discovered_total=total_files,
+                        processed=processed_count,
+                        started_at=started_at,
+                        finished_at=datetime.now(timezone.utc).isoformat(),
+                    )
             self.db.release_lock()
 
         if interrupted:
@@ -335,7 +507,11 @@ class Scanner:
         context: "multiprocessing.context.BaseContext",
         total_files: int,
         is_tty: bool,
-    ) -> None:
+        scope: str | None = None,
+        started_at: str | None = None,
+        initial_processed: int = 0,
+        progress_callback: ProgressCallback | None = None,
+    ) -> int:
         import queue as _queue
         from pebble import ProcessPool
 
@@ -345,7 +521,8 @@ class Scanner:
 
         last_progress_t = time.monotonic()
         done_batch: list[str] = []
-        _processed = 0
+        _processed = initial_processed
+        last_callback_t = 0.0
 
         # result_q receives (future, fpath, pre_mtime, pre_size) when a worker finishes.
         # Done callbacks run in a pebble thread — we drain in the main thread.
@@ -358,12 +535,23 @@ class Scanner:
             _print_progress(_progress_line(0, total_files, stats), is_tty)
 
         def _maybe_progress() -> None:
-            nonlocal last_progress_t
+            nonlocal last_progress_t, last_callback_t
             now = time.monotonic()
             if now - last_progress_t >= _PROGRESS_INTERVAL_S:
                 line = _progress_line(_processed, total_files, stats)
                 _print_progress(line, is_tty)
                 last_progress_t = now
+            if progress_callback is not None and (last_callback_t == 0.0 or now - last_callback_t >= 1.0):
+                self._emit_progress(
+                    progress_callback,
+                    state="running",
+                    stats=stats,
+                    scope=scope,
+                    discovered_total=total_files,
+                    processed=_processed,
+                    started_at=started_at,
+                )
+                last_callback_t = now
 
         def _process_result(future, fpath: str, pre_mtime: float, pre_size: int) -> None:
             """Handle one completed future. Called from main thread only."""
@@ -498,3 +686,14 @@ class Scanner:
             else:
                 sys.stderr.write(line + "\n")
             sys.stderr.flush()
+
+        self._emit_progress(
+            progress_callback,
+            state="running",
+            stats=stats,
+            scope=scope,
+            discovered_total=total_files,
+            processed=_processed,
+            started_at=started_at,
+        )
+        return _processed

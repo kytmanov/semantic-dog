@@ -124,6 +124,19 @@ class TestScannerE2E:
         stats = scanner.scan()
         assert stats.total >= 3
 
+    def test_progress_callback_receives_completed_snapshot(self, tmp_path):
+        make_minimal_jpeg(tmp_path / "photo.jpg")
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        scanner = Scanner(cfg, db)
+        snapshots = []
+
+        stats = scanner.scan(progress_callback=snapshots.append)
+
+        assert stats.total >= 1
+        assert snapshots[-1].state == "completed"
+        assert snapshots[-1].scan_id == stats.scan_id
+
     def test_second_scan_skips_unchanged_files(self, tmp_path):
         make_minimal_jpeg(tmp_path / "img.jpg")
         cfg = _cfg(tmp_path)

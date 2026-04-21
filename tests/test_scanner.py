@@ -12,7 +12,14 @@ import pytest
 
 from semanticdog.config import Config
 from semanticdog.db import Database
-from semanticdog.scanner import Scanner, ScanStats, walk_paths, is_excluded, _validate_file
+from semanticdog.scanner import (
+    Scanner,
+    ScanProgressSnapshot,
+    ScanStats,
+    walk_paths,
+    is_excluded,
+    _validate_file,
+)
 from tests.fixtures.generators import make_minimal_jpeg, make_minimal_png, make_not_an_image, make_truncated_jpeg
 
 
@@ -108,6 +115,29 @@ class TestScanStats:
         s = ScanStats()
         s.start_time = time.monotonic()
         assert s.files_per_sec() == 0.0
+
+
+class TestScanProgressSnapshot:
+    def test_snapshot_fields(self):
+        snap = ScanProgressSnapshot(
+            state="running",
+            scan_id="scan-1",
+            scope="/photos",
+            discovered_total=10,
+            processed=3,
+            skipped=1,
+            ok=2,
+            corrupt=1,
+            unreadable=0,
+            unsupported=0,
+            error=0,
+            files_per_sec=12.5,
+            eta_s=1.2,
+            started_at="2026-01-01T00:00:00+00:00",
+            finished_at=None,
+        )
+        assert snap.state == "running"
+        assert snap.processed == 3
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +308,32 @@ class TestScannerScan:
         # fps may be 0 if no files processed (all skipped), otherwise positive
         assert stats.files_per_sec() >= 0.0
 
+    def test_scan_emits_progress_snapshots(self, scanner, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        snapshots: list[ScanProgressSnapshot] = []
+
+        stats = scanner.scan([str(tmp_path)], progress_callback=snapshots.append)
+
+        assert stats.total >= 1
+        assert snapshots
+        assert snapshots[0].state == "starting"
+        assert snapshots[-1].state == "completed"
+        assert snapshots[-1].processed >= 1
+        assert snapshots[-1].scan_id == stats.scan_id
+
+    def test_scan_emits_failed_snapshot_on_error(self, cfg, db, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        snapshots: list[ScanProgressSnapshot] = []
+        scanner = Scanner(cfg, db)
+
+        with patch.object(scanner, "_run_pool", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                scanner.scan([str(tmp_path)], progress_callback=snapshots.append)
+
+        assert snapshots
+        assert snapshots[-1].state == "failed"
+        assert snapshots[-1].last_error == "boom"
+
 
 # ---------------------------------------------------------------------------
 # TOCTOU: file changes during scan → discard
@@ -290,7 +346,19 @@ class TestTOCTOU:
 
         original_run_pool = scanner._run_pool
 
-        def _patched_run_pool(file_list, scan_id, stats, workers, context, total_files, is_tty):
+        def _patched_run_pool(
+            file_list,
+            scan_id,
+            stats,
+            workers,
+            context,
+            total_files,
+            is_tty,
+            scope=None,
+            started_at=None,
+            initial_processed=0,
+            progress_callback=None,
+        ):
             # Mutate the file between submit and TOCTOU check by patching os.stat
             original_stat = os.stat
 
@@ -308,7 +376,19 @@ class TestTOCTOU:
                 return st
 
             with patch("semanticdog.scanner.os.stat", side_effect=_fake_stat):
-                original_run_pool(file_list, scan_id, stats, workers, context, total_files, is_tty)
+                return original_run_pool(
+                    file_list,
+                    scan_id,
+                    stats,
+                    workers,
+                    context,
+                    total_files,
+                    is_tty,
+                    scope=scope,
+                    started_at=started_at,
+                    initial_processed=initial_processed,
+                    progress_callback=progress_callback,
+                )
 
         with patch.object(scanner, "_run_pool", side_effect=_patched_run_pool):
             stats = scanner.scan([str(tmp_path)])
