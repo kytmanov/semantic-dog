@@ -453,12 +453,13 @@ class Scanner:
             raise
         finally:
             if not interrupted and not self._shutdown.is_set() and not failed:
+                elapsed = time.monotonic() - stats.start_time
                 self.db.finish_scan(
                     scan_id,
-                    total=stats.total,
+                    total=processed_count,
                     corrupt=stats.corrupt,
                     unreadable=stats.unreadable,
-                    files_per_sec=stats.files_per_sec(),
+                    files_per_sec=processed_count / elapsed if elapsed > 0.001 else 0.0,
                 )
                 self.db.cleanup_scan_queue(scan_id)
                 self._emit_progress(

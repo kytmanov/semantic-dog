@@ -151,11 +151,11 @@ function updateScanSection(current, last) {
     if (_fastTimer) _fastUntil = Math.min(_fastUntil, Date.now() + 2000);
   }
 
-  // Update "files examined" from the last in-memory snapshot (includes skipped files,
-  // which the DB total does not count).
-  if (last) {
+  // Update "files examined" from the last in-memory snapshot only when the current
+  // page-load value is 0 (stale DB from a pre-fix scan) and we have live data.
+  if (last && last.processed > 0) {
     const el = document.getElementById('last-scan-files-checked');
-    if (el && last.processed > 0) {
+    if (el && el.textContent.trim() === '0') {
       el.textContent = last.processed.toLocaleString();
     }
   }
