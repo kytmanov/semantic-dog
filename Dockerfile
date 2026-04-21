@@ -28,6 +28,6 @@ EXPOSE 9090
 VOLUME ["/data/config", "/data/state", "/data/logs"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "from semanticdog.cli import _find_config; from semanticdog.runtime import load_runtime; import urllib.request; runtime = load_runtime(_find_config()); port = runtime.cfg.http_port if runtime.cfg else 9090; urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read()"
+  CMD python -c "import os, urllib.request; port = int(os.getenv('SDOG_HTTP_PORT', '9090')); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read()"
 
 CMD ["sdog", "serve", "--host", "0.0.0.0"]

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import RESTART_REQUIRED_CONFIG_FIELDS
+from .config_store import default_config_view
 from .notify import Notifier, ScanSummary
 from .runtime import AppRuntime
 from .services.diagnostics import collect_setup_diagnostics
@@ -167,7 +168,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
         setup = collect_setup_diagnostics(runtime)
         status_payload = await status(request)
         store = runtime.config_store
-        config_view = store.get_view() if store is not None else {"effective": runtime.cfg or {}}
+        config_view = store.get_view() if store is not None else default_config_view(runtime.cfg, runtime.config_path)
         if runtime.config_error or not setup["scan_roots"]:
             return templates.TemplateResponse(
                 request,
@@ -207,7 +208,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     async def setup_page(request: Request):
         runtime = _get_runtime(request)
         store = runtime.config_store
-        config_view = store.get_view() if store is not None else {"effective": runtime.cfg or {}}
+        config_view = store.get_view() if store is not None else default_config_view(runtime.cfg, runtime.config_path)
         return templates.TemplateResponse(
             request,
             "setup.html",
@@ -222,7 +223,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     async def config_page(request: Request):
         runtime = _get_runtime(request)
         store = runtime.config_store
-        config_view = store.get_view() if store is not None else {"effective": runtime.cfg or {}, "sources": {}}
+        config_view = store.get_view() if store is not None else default_config_view(runtime.cfg, runtime.config_path)
         return templates.TemplateResponse(
             request,
             "config.html",
@@ -350,7 +351,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
         runtime = _get_runtime(request)
         store = runtime.config_store
         if store is None:
-            return {"path": runtime.config_path, "raw": {}, "effective": {}, "sources": {}}
+            return default_config_view(runtime.cfg, runtime.config_path)
         return store.get_view()
 
     @target_app.post("/api/config/validate")
@@ -384,9 +385,10 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             saved = store.save(payload)
             runtime.config_path = saved["path"]
             runtime.config_store = store
-            runtime.cfg = store.load_effective()
-            runtime.config_error = None
             restart_fields = set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
+            if not restart_fields:
+                runtime.cfg = store.load_effective()
+                runtime.config_error = None
             if not restart_fields and runtime.db is not None:
                 from .services.scan_manager import ScanManager
 

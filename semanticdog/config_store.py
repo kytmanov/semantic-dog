@@ -8,14 +8,38 @@ from typing import Any
 
 import yaml
 
-from .cli import _find_config
 from .config import Config, EDITABLE_CONFIG_FIELDS, _DEFAULTS, load_config
 from .exceptions import ConfigError
 
 
+CONFIG_SEARCH_PATHS = (
+    "./config.yaml",
+    "~/.config/semanticdog/config.yaml",
+    "/data/config/config.yaml",
+)
+
+
+def find_config_path() -> str | None:
+    for candidate in CONFIG_SEARCH_PATHS:
+        path = Path(candidate).expanduser()
+        if path.exists():
+            return str(path)
+    return None
+
+
+def default_config_view(cfg: Config | None = None, config_path: str | None = None) -> dict[str, Any]:
+    effective_cfg = cfg or Config()
+    return {
+        "path": config_path,
+        "raw": {},
+        "effective": {field: getattr(effective_cfg, field) for field in Config.__dataclass_fields__},
+        "sources": {field: "default" for field in Config.__dataclass_fields__},
+    }
+
+
 class ConfigStore:
     def __init__(self, config_path: str | None = None) -> None:
-        resolved = config_path or _find_config() or "/data/config/config.yaml"
+        resolved = config_path or find_config_path() or "/data/config/config.yaml"
         self.path = Path(resolved).expanduser()
 
     def load_raw(self) -> dict[str, Any]:

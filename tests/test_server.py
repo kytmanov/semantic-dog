@@ -202,6 +202,19 @@ class TestApiEndpoints:
         assert r.json()["status"] == "saved"
         assert "future_key: 42" in config_path.read_text()
 
+    async def test_api_config_save_does_not_apply_restart_required_fields_live(self, configured_app, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"paths:\n  - {tmp_path}\nhttp_port: 9090\n")
+        app.state.runtime.config_store = __import__("semanticdog.config_store", fromlist=["ConfigStore"]).ConfigStore(str(config_path))
+        original_port = app.state.runtime.cfg.http_port
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.put("/api/config", json={"http_port": 9191})
+
+        assert r.status_code == 200
+        assert r.json()["restart_required"] == ["http_port"]
+        assert app.state.runtime.cfg.http_port == original_port
+
     async def test_api_config_save_blocked_while_scan_running(self, configured_app):
         runtime = app.state.runtime
         runtime.scan_manager._active_future = MagicMock(done=MagicMock(return_value=False))

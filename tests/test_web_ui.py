@@ -20,6 +20,15 @@ class TestWebUi:
         assert r.status_code == 200
         assert "Setup" in r.text
 
+    async def test_config_page_renders_with_no_config_store(self):
+        app = create_app(AppRuntime(cfg=Config(), db=None, config_store=None))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/config")
+
+        assert r.status_code == 200
+        assert "Configuration" in r.text
+
     async def test_dashboard_renders_for_configured_runtime(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
         app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))

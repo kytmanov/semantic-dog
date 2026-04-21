@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .config import Config, load_config
+from .config_store import ConfigStore, find_config_path
 
 if TYPE_CHECKING:
     from .db import Database

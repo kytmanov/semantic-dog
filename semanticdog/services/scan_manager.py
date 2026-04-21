@@ -111,15 +111,24 @@ class ScanManager:
             except ValueError:
                 pass
 
+        corrupt = [row for row in self._db.get_new_corrupt() if row.get("scan_id") == stats.scan_id][:50]
+        unreadable = [row for row in self._db.get_new_unreadable() if row.get("scan_id") == stats.scan_id][:50]
+        if not corrupt and not unreadable:
+            with self._lock:
+                self._last_notification_errors = []
+            return
+
         summary = ScanSummary(
             scan_id=stats.scan_id,
             scope=scan.get("scope") or ",".join(self._cfg.paths),
             duration_s=duration_s,
             total_checked=stats.total,
-            corrupt=self._db.list_issue_files(statuses=["corrupt"], limit=50),
-            unreadable=self._db.list_issue_files(statuses=["unreadable"], limit=50),
+            corrupt=corrupt,
+            unreadable=unreadable,
         )
         errors = Notifier(self._cfg).notify(summary)
+        if not errors:
+            self._db.mark_notified([row["path"] for row in corrupt + unreadable])
         with self._lock:
             self._last_notification_errors = errors
 
