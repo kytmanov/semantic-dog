@@ -232,6 +232,18 @@ p  { margin: 0; }
   min-width: 2px;
 }
 
+/* Indeterminate shimmer — used while scan is pending (no data yet) */
+.progress-fill.indeterminate {
+  width: 30% !important;
+  background: linear-gradient(90deg, var(--blue) 0%, #7cb8ff 50%, var(--blue) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── Badges ──────────────────────────────────────────────────── */
 
 .badge {

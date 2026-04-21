@@ -65,6 +65,27 @@ function refreshTimestamps() {
   }
 }
 
+// ── Fast-poll state ───────────────────────────────────────────
+// Activated after triggering a scan so we don't miss fast completions.
+
+let _fastTimer   = null;
+let _fastUntil   = 0;
+let _scanPending = false; // optimistic: show progress until first confirmed state
+
+function startFastPoll() {
+  _fastUntil = Date.now() + 45000; // 45s window
+  if (_fastTimer) return;
+  _fastTimer = setInterval(async () => {
+    await refreshDashboard();
+    if (Date.now() >= _fastUntil) stopFastPoll();
+  }, 600);
+}
+
+function stopFastPoll() {
+  if (_fastTimer) { clearInterval(_fastTimer); _fastTimer = null; }
+  _scanPending = false;
+}
+
 // ── Dashboard ─────────────────────────────────────────────────
 
 function setDotClass(dot, cls) {
@@ -72,28 +93,47 @@ function setDotClass(dot, cls) {
   dot.className = 'status-dot ' + cls;
 }
 
-function updateScanSection(snapshot) {
+function updateScanSection(current, last) {
   const progressSection = document.getElementById('scan-progress-section');
   const idleSection     = document.getElementById('scan-idle-section');
   const runBtn          = document.getElementById('run-scan-btn');
   if (!progressSection) return;
 
-  const active = snapshot && ['starting', 'running'].includes(snapshot.state);
+  const scanning = current && ['starting', 'running'].includes(current.state);
+  // Show progress while actively scanning OR briefly while optimistic pending
+  const showProgress = scanning || _scanPending;
 
-  progressSection.style.display = active ? '' : 'none';
-  if (idleSection) idleSection.style.display = active ? 'none' : '';
+  progressSection.style.display = showProgress ? '' : 'none';
+  if (idleSection) idleSection.style.display = showProgress ? 'none' : '';
 
   if (runBtn) {
-    runBtn.disabled = active;
-    runBtn.textContent = active ? 'Scan running…' : 'Run Scan';
+    runBtn.disabled    = showProgress;
+    runBtn.textContent = showProgress ? 'Scan running…' : 'Run Scan';
   }
 
-  if (active) {
-    const pct = snapshot.discovered_total > 0
-      ? Math.min(100, Math.floor(snapshot.processed / snapshot.discovered_total * 100))
+  const fill = document.getElementById('progress-fill');
+
+  if (_scanPending && !scanning) {
+    // Optimistic state: show indeterminate shimmer while waiting for first snapshot
+    if (fill) fill.classList.add('indeterminate');
+    const pctEl = document.getElementById('progress-pct');
+    const count = document.getElementById('scan-count');
+    const rate  = document.getElementById('scan-rate');
+    const eta   = document.getElementById('scan-eta');
+    if (pctEl) pctEl.textContent = '…';
+    if (count) count.textContent = 'discovering files…';
+    if (rate)  rate.textContent  = '';
+    if (eta)   eta.textContent   = '';
+  }
+
+  if (scanning) {
+    _scanPending = false; // got real data — no longer optimistic
+    if (fill) fill.classList.remove('indeterminate');
+
+    const pct = current.discovered_total > 0
+      ? Math.min(100, Math.floor(current.processed / current.discovered_total * 100))
       : 0;
 
-    const fill  = document.getElementById('progress-fill');
     const pctEl = document.getElementById('progress-pct');
     const count = document.getElementById('scan-count');
     const rate  = document.getElementById('scan-rate');
@@ -102,9 +142,22 @@ function updateScanSection(snapshot) {
     if (fill)  fill.style.width = pct + '%';
     if (pctEl) pctEl.textContent = pct + '%';
     if (count) count.textContent =
-      `${(snapshot.processed || 0).toLocaleString()} / ${(snapshot.discovered_total || 0).toLocaleString()}`;
-    if (rate)  rate.textContent = `${Number(snapshot.files_per_sec || 0).toFixed(1)} files/sec`;
-    if (eta)   eta.textContent  = fmtEta(snapshot.eta_s);
+      `${(current.processed || 0).toLocaleString()} / ${(current.discovered_total || 0).toLocaleString()}`;
+    if (rate)  rate.textContent  = `${Number(current.files_per_sec || 0).toFixed(1)} files/sec`;
+    if (eta)   eta.textContent   = fmtEta(current.eta_s);
+  } else if (!showProgress) {
+    // Scan finished — extend fast poll a bit to let the next status poll refresh counts,
+    // then stop it so we fall back to the slow 5s interval.
+    if (_fastTimer) _fastUntil = Math.min(_fastUntil, Date.now() + 2000);
+  }
+
+  // Update "files examined" from the last in-memory snapshot (includes skipped files,
+  // which the DB total does not count).
+  if (last) {
+    const el = document.getElementById('last-scan-files-checked');
+    if (el && last.processed > 0) {
+      el.textContent = last.processed.toLocaleString();
+    }
   }
 }
 
@@ -130,28 +183,22 @@ async function refreshDashboard() {
     if (crEl) crEl.textContent = (status.by_status?.corrupt ?? 0).toLocaleString();
     if (urEl) urEl.textContent = (status.by_status?.unreadable ?? 0).toLocaleString();
 
-    // Update stat card highlights
     const corruptCard    = document.getElementById('corrupt-card');
     const unreadableCard = document.getElementById('unreadable-card');
-    if (corruptCard) {
-      corruptCard.className = (status.by_status?.corrupt ?? 0) > 0 ? 'card card-danger' : 'card';
-    }
-    if (unreadableCard) {
-      unreadableCard.className = (status.by_status?.unreadable ?? 0) > 0 ? 'card card-warn' : 'card';
-    }
+    if (corruptCard)    corruptCard.className    = (status.by_status?.corrupt    ?? 0) > 0 ? 'card card-danger' : 'card';
+    if (unreadableCard) unreadableCard.className = (status.by_status?.unreadable ?? 0) > 0 ? 'card card-warn'   : 'card';
 
-    // Update status dot
     const s = status.status;
-    const hasBadFiles = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
-    if (s === 'scanning')     setDotClass(dot, 'dot-blue');
-    else if (hasBadFiles)     setDotClass(dot, 'dot-red');
+    const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
+    if      (s === 'scanning')                            setDotClass(dot, 'dot-blue');
+    else if (hasBad)                                      setDotClass(dot, 'dot-red');
     else if (s === 'idle' && (status.files_indexed ?? 0) > 0) setDotClass(dot, 'dot-green');
-    else if (s === 'degraded' || s === 'error') setDotClass(dot, 'dot-amber');
-    else                      setDotClass(dot, 'dot-gray');
+    else if (s === 'degraded' || s === 'error')           setDotClass(dot, 'dot-amber');
+    else                                                  setDotClass(dot, 'dot-gray');
   }
 
   if (scanState) {
-    updateScanSection(scanState.current);
+    updateScanSection(scanState.current, scanState.last);
   }
 }
 
@@ -170,6 +217,11 @@ async function triggerScan() {
     const body = await r.json();
     if (r.ok) {
       toast('Scan started', 'success');
+      // Show progress section immediately (optimistic) and start fast polling
+      // so we don't miss scans that complete within the normal 5s interval.
+      _scanPending = true;
+      updateScanSection(null, null);
+      startFastPoll();
     } else if (r.status === 409) {
       toast('Scan already running', '');
       if (btn) { btn.disabled = false; btn.textContent = 'Run Scan'; }

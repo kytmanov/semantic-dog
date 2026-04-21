@@ -144,8 +144,8 @@
         </div>
       </div>
       <div class="col" style="text-align:right; flex-shrink:0;">
-        <div class="stat-num text-1" style="font-size:1.375rem;">{{ ls.get("total", 0) | int }}</div>
-        <div class="stat-label">files checked</div>
+        <div class="stat-num text-1" style="font-size:1.375rem;" id="last-scan-files-checked">{{ ls.get("total", 0) | int }}</div>
+        <div class="stat-label">files examined</div>
         {% if ls.get("files_per_sec") %}
           <div class="text-3" style="font-size:0.75rem; margin-top:0.125rem;">
             {{ "%.1f"|format(ls.get("files_per_sec")) }} files/sec
