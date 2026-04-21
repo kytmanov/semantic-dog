@@ -320,11 +320,7 @@ class TestTriggerEndpoint:
 
     async def test_trigger_cooldown_returns_429(self, configured_app):
         server_module._last_trigger_time = time.monotonic()  # simulate recent trigger
-        # Patch cooldown to large value
-        configured_app  # ensure _cfg is set
-        server_module._cfg = Config(paths=["/x"], workers=1, raw_workers=1)
-        # Set trigger_cooldown_s attribute manually
-        server_module._cfg.__dict__["trigger_cooldown_s"] = 9999
+        app.state.runtime.cfg.trigger_cooldown_s = 9999
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.post("/trigger")

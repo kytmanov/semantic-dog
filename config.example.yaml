@@ -53,14 +53,23 @@ memory_limit_mb: 0
 
 # HTTP server port (Prometheus /metrics, POST /trigger, /mcp)
 http_port: 9090
+trigger_cooldown_s: 60
+
+# HTTP basic auth for the Web UI and API
+http_basic_enabled: false
+# http_basic_username: admin      # set if enabled
+# http_basic_password: ""        # prefer SDOG_HTTP_BASIC_PASSWORD in production
 
 # Notifications
 notify_email: ""          # SMTP recipient
 smtp_host: ""
 smtp_user: ""
 smtp_pass: ""             # use SDOG_SMTP_PASS env var in production
+smtp_tls: starttls         # starttls | ssl | none
+smtp_port: 0               # 0 = auto based on smtp_tls
 
 webhook_url: ""           # Gotify / Ntfy / Pushover / Slack webhook
+webhook_allow_private: false
 
 # TrueNAS (experimental alert push — may break on SCALE upgrades)
 truenas_url: ""

@@ -133,6 +133,18 @@ class TestEnvOverrides:
         cfg = load_config()
         assert cfg.mcp_auth_token == "secret"
 
+    def test_trigger_cooldown_from_env(self, monkeypatch):
+        monkeypatch.setenv("SDOG_PATHS", "/x")
+        monkeypatch.setenv("SDOG_TRIGGER_COOLDOWN_S", "75")
+        cfg = load_config()
+        assert cfg.trigger_cooldown_s == 75
+
+    def test_smtp_port_from_env(self, monkeypatch):
+        monkeypatch.setenv("SDOG_PATHS", "/x")
+        monkeypatch.setenv("SDOG_SMTP_PORT", "465")
+        cfg = load_config()
+        assert cfg.smtp_port == 465
+
 
 class TestValidation:
     def test_no_paths_raises(self):
@@ -181,6 +193,28 @@ class TestValidation:
             http_basic_password="secret",
         )
         cfg.validate()
+
+    def test_negative_trigger_cooldown_rejected(self):
+        cfg = Config(paths=["/x"], trigger_cooldown_s=-1)
+        with pytest.raises(ConfigError, match="trigger_cooldown_s"):
+            cfg.validate()
+
+    def test_invalid_smtp_tls_rejected(self):
+        cfg = Config(paths=["/x"], smtp_tls="maybe")
+        with pytest.raises(ConfigError, match="smtp_tls"):
+            cfg.validate()
+
+    def test_negative_smtp_port_rejected(self):
+        cfg = Config(paths=["/x"], smtp_port=-25)
+        with pytest.raises(ConfigError, match="smtp_port"):
+            cfg.validate()
+
+    def test_config_field_metadata_exposes_sets(self):
+        metadata = Config.field_metadata()
+        assert "trigger_cooldown_s" in metadata["editable"]
+        assert "smtp_pass" in metadata["env_only"]
+        assert "http_port" in metadata["restart_required"]
+        assert "schedule" in metadata["hidden"]
 
 
 class TestPathAllowlist:

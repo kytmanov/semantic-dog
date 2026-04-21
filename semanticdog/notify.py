@@ -158,8 +158,8 @@ class SmtpNotifier:
         msg["From"] = f"semanticdog@{self.cfg.smtp_host}"
         msg["To"] = self.cfg.notify_email
 
-        tls = getattr(self.cfg, "smtp_tls", "starttls")
-        port = getattr(self.cfg, "smtp_port", None)
+        tls = self.cfg.smtp_tls
+        port = self.cfg.smtp_port or None
 
         try:
             if tls == "ssl":
@@ -198,7 +198,7 @@ class WebhookNotifier:
         if not self.cfg.webhook_url:
             return
 
-        allow_private = getattr(self.cfg, "webhook_allow_private", False)
+        allow_private = self.cfg.webhook_allow_private
         try:
             validate_webhook_url(self.cfg.webhook_url, allow_private=allow_private)
         except ValueError as e:

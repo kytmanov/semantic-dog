@@ -404,7 +404,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             )
 
         if cfg is not None:
-            cooldown = getattr(cfg, "trigger_cooldown_s", 60)
+            cooldown = cfg.trigger_cooldown_s
             elapsed = time.monotonic() - _last_trigger_time
             if _last_trigger_time > 0 and elapsed < cooldown:
                 retry_after = int(cooldown - elapsed) + 1
