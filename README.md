@@ -131,7 +131,7 @@ mcp_allow_write: true   # lets agents trigger scans and reset records
 ```
 
 ```bash
-SDOG_MCP_AUTH_TOKEN=your-secret uvicorn semanticdog.server:app --port 9090
+SDOG_MCP_AUTH_TOKEN=your-secret sdog serve --port 9090
 ```
 
 **Add to Claude Code** (`~/.claude/settings.json`):
@@ -181,7 +181,7 @@ Every option has a matching `SDOG_*` environment variable. Env vars always overr
 ## HTTP API and Prometheus
 
 ```bash
-uvicorn semanticdog.server:app --port 9090
+sdog serve --port 9090
 ```
 
 - `GET /metrics` — Prometheus scrape endpoint

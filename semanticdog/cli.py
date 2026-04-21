@@ -52,6 +52,30 @@ def _open_db(cfg):
         raise typer.Exit(1)
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Host interface to bind"),
+    port: Optional[int] = typer.Option(None, "--port", help="Port to listen on"),
+    config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML"),
+) -> None:
+    """Run the HTTP server for the Web UI and API."""
+    import uvicorn
+
+    from .runtime import load_runtime
+    from .server import create_app
+
+    resolved = config or _find_config()
+    runtime = load_runtime(resolved)
+    listen_port = port or (runtime.cfg.http_port if runtime.cfg is not None else 9090)
+
+    if runtime.config_error:
+        typer.echo(f"Config warning: {runtime.config_error}", err=True)
+    if runtime.db_error:
+        typer.echo(f"DB warning: {runtime.db_error}", err=True)
+
+    uvicorn.run(create_app(runtime), host=host, port=listen_port)
+
+
 # ---------------------------------------------------------------------------
 # scan
 # ---------------------------------------------------------------------------

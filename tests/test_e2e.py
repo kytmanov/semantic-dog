@@ -16,6 +16,7 @@ from semanticdog.db import Database
 from semanticdog.scanner import Scanner
 import semanticdog.server as server_module
 from semanticdog.server import app as http_app, build_app
+from semanticdog.runtime import AppRuntime
 
 from tests.fixtures.generators import (
     make_minimal_jpeg,
@@ -67,6 +68,7 @@ def _reset_server():
     server_module._cfg = None
     server_module._db = None
     server_module._last_trigger_time = 0.0
+    server_module.app.state.runtime = AppRuntime()
     if server_module._scan_lock.locked():
         try:
             server_module._scan_lock.release()
@@ -76,6 +78,7 @@ def _reset_server():
     server_module._cfg = None
     server_module._db = None
     server_module._last_trigger_time = 0.0
+    server_module.app.state.runtime = AppRuntime()
 
 
 # ---------------------------------------------------------------------------

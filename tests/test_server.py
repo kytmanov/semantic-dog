@@ -11,9 +11,10 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 
 import semanticdog.server as server_module
-from semanticdog.server import app, build_app
+from semanticdog.server import app, build_app, create_app
 from semanticdog.config import Config
 from semanticdog.db import Database
+from semanticdog.runtime import AppRuntime
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +27,7 @@ def _reset_server_state():
     server_module._cfg = None
     server_module._db = None
     server_module._last_trigger_time = 0.0
+    server_module.app.state.runtime = AppRuntime()
     # Reset lock in case previous test left it locked
     if server_module._scan_lock.locked():
         try:
@@ -36,6 +38,7 @@ def _reset_server_state():
     server_module._cfg = None
     server_module._db = None
     server_module._last_trigger_time = 0.0
+    server_module.app.state.runtime = AppRuntime()
 
 
 @pytest.fixture
@@ -108,6 +111,14 @@ class TestStatusEndpoint:
         assert r.status_code == 200
         assert r.json()["status"] == "idle"
 
+    async def test_status_degraded(self):
+        degraded_app = create_app(AppRuntime(config_error="bad config"))
+        async with AsyncClient(transport=ASGITransport(app=degraded_app), base_url="http://test") as c:
+            r = await c.get("/status")
+        assert r.status_code == 200
+        assert r.json()["status"] == "degraded"
+        assert r.json()["config_error"] == "bad config"
+
     async def test_status_includes_file_count(self, configured_app, db):
         db.record("/img.jpg", 1.0, 100, "ok")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -131,6 +142,13 @@ class TestTriggerEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.post("/trigger")
         assert r.status_code == 503
+
+    async def test_trigger_returns_503_with_runtime_errors(self):
+        degraded_app = create_app(AppRuntime(config_error="bad config"))
+        async with AsyncClient(transport=ASGITransport(app=degraded_app), base_url="http://test") as c:
+            r = await c.post("/trigger")
+        assert r.status_code == 503
+        assert r.json()["config_error"] == "bad config"
 
     async def test_trigger_runs_scan(self, configured_app, tmp_path, cfg):
         from tests.fixtures.generators import make_minimal_jpeg
@@ -167,6 +185,8 @@ class TestBuildApp:
         build_app(cfg, db)
         assert server_module._cfg is cfg
         assert server_module._db is db
+        assert app.state.runtime.cfg is cfg
+        assert app.state.runtime.db is db
 
     def test_build_app_returns_fastapi(self, cfg, db):
         from fastapi import FastAPI
