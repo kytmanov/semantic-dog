@@ -484,6 +484,85 @@ class TestHttpServerE2E:
         assert r.status_code == 200
         assert r.json()["status"] == "sent"
 
+    async def test_restart_required_config_save_does_not_apply_live(self, tmp_path):
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(textwrap.dedent(f"""
+            paths:
+              - {tmp_path}
+            db_path: {tmp_path}/state.db
+            http_port: 9090
+            workers: 1
+            raw_workers: 1
+        """))
+        from semanticdog.config_store import ConfigStore
+
+        http_app.state.runtime.config_store = ConfigStore(str(config_path))
+        original_port = http_app.state.runtime.cfg.http_port
+
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            r = await c.put("/api/config", json={"http_port": 9191})
+
+        assert r.status_code == 200
+        assert r.json()["restart_required"] == ["http_port"]
+        assert http_app.state.runtime.cfg.http_port == original_port
+
+    async def test_completed_scan_notifications_are_marked_notified(self, tmp_path):
+        make_truncated_jpeg(tmp_path / "bad.jpg")
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+
+        with patch("semanticdog.services.scan_manager.Notifier.notify", return_value=[]):
+            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+                r = await c.post("/trigger")
+                assert r.status_code == 200
+
+        deadline = time.time() + 5
+        while http_app.state.runtime.scan_manager.is_running() and time.time() < deadline:
+            await asyncio.sleep(0.05)
+
+        assert db.get_new_corrupt() == []
+
+    async def test_completed_scan_notifications_only_include_current_scan(self, tmp_path):
+        older = tmp_path / "older"
+        current = tmp_path / "current"
+        older.mkdir()
+        current.mkdir()
+        make_truncated_jpeg(older / "old-bad.jpg")
+        make_truncated_jpeg(current / "new-bad.jpg")
+
+        cfg = _cfg(tmp_path)
+        cfg.trigger_cooldown_s = 0
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+
+        captured = []
+
+        def _capture(summary):
+            captured.append(summary)
+            return []
+
+        with patch("semanticdog.services.scan_manager.Notifier.notify", side_effect=_capture):
+            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+                first = await c.post("/trigger", json={"scope": str(older)})
+                assert first.status_code == 200
+                deadline = time.time() + 5
+                while http_app.state.runtime.scan_manager.is_running() and time.time() < deadline:
+                    await asyncio.sleep(0.05)
+
+                second = await c.post("/trigger", json={"scope": str(current)})
+                assert second.status_code == 200
+                deadline = time.time() + 5
+                while http_app.state.runtime.scan_manager.is_running() and time.time() < deadline:
+                    await asyncio.sleep(0.05)
+
+        assert len(captured) == 2
+        assert [row["path"] for row in captured[0].corrupt] == [str(older / "old-bad.jpg")]
+        assert [row["path"] for row in captured[1].corrupt] == [str(current / "new-bad.jpg")]
+
 
 # ---------------------------------------------------------------------------
 # E2E: config loading from YAML
