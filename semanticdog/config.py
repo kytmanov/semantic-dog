@@ -34,13 +34,20 @@ _DEFAULTS: dict[str, Any] = {
     "enable_hash": False,
     "hash_full_threshold_mb": 10,
     "memory_limit_mb": 0,
-    "http_port": 9090,
+    "http_port": 8181,
+    "trigger_cooldown_s": 60,
+    "http_basic_enabled": False,
+    "http_basic_username": "",
+    "http_basic_password": "",
     # Notifications
     "notify_email": "",
     "smtp_host": "",
     "smtp_user": "",
     "smtp_pass": "",
+    "smtp_tls": "starttls",
+    "smtp_port": 0,
     "webhook_url": "",
+    "webhook_allow_private": False,
     # TrueNAS
     "truenas_url": "",
     "truenas_key": "",
@@ -58,6 +65,40 @@ _PREFIX = "SDOG_"
 
 # Env vars that are colon-separated lists
 _LIST_VARS = {"SDOG_PATHS", "SDOG_EXCLUDE"}
+
+EDITABLE_CONFIG_FIELDS = frozenset(
+    {
+        "paths",
+        "exclude",
+        "follow_symlinks",
+        "db_path",
+        "workers",
+        "raw_workers",
+        "raw_decode_depth",
+        "validation_timeout_s",
+        "force_recheck_days",
+        "http_port",
+        "schedule",
+        "trigger_cooldown_s",
+        "notify_email",
+        "smtp_host",
+        "smtp_user",
+        "smtp_tls",
+        "smtp_port",
+        "webhook_url",
+        "webhook_allow_private",
+        "http_basic_enabled",
+        "http_basic_username",
+    }
+)
+
+ENV_ONLY_CONFIG_FIELDS = frozenset({"smtp_pass", "http_basic_password", "mcp_auth_token", "truenas_key"})
+
+RESTART_REQUIRED_CONFIG_FIELDS = frozenset(
+    {"db_path", "http_port", "http_basic_enabled", "http_basic_username", "http_basic_password"}
+)
+
+HIDDEN_CONFIG_FIELDS = frozenset({"log_path", "log_max_bytes", "log_backup_count"})
 
 
 @dataclass
@@ -92,14 +133,21 @@ class Config:
 
     # Resources
     memory_limit_mb: int = 0
-    http_port: int = 9090
+    http_port: int = 8181
+    trigger_cooldown_s: int = 60
+    http_basic_enabled: bool = False
+    http_basic_username: str = ""
+    http_basic_password: str = ""
 
     # Notifications
     notify_email: str = ""
     smtp_host: str = ""
     smtp_user: str = ""
     smtp_pass: str = ""
+    smtp_tls: str = "starttls"
+    smtp_port: int = 0
     webhook_url: str = ""
+    webhook_allow_private: bool = False
 
     # TrueNAS
     truenas_url: str = ""
@@ -129,6 +177,19 @@ class Config:
             raise ConfigError(f"raw_workers must be >= 1, got {self.raw_workers}")
         if self.validation_timeout_s < 1:
             raise ConfigError(f"validation_timeout_s must be >= 1, got {self.validation_timeout_s}")
+        if self.trigger_cooldown_s < 0:
+            raise ConfigError(f"trigger_cooldown_s must be >= 0, got {self.trigger_cooldown_s}")
+        if self.smtp_tls not in ("starttls", "ssl", "none"):
+            raise ConfigError(
+                f"smtp_tls must be one of 'starttls', 'ssl', or 'none', got {self.smtp_tls!r}"
+            )
+        if self.smtp_port < 0:
+            raise ConfigError(f"smtp_port must be >= 0, got {self.smtp_port}")
+        if self.http_basic_enabled:
+            if not self.http_basic_username:
+                raise ConfigError("HTTP basic auth is enabled but http_basic_username is empty.")
+            if not self.http_basic_password:
+                raise ConfigError("HTTP basic auth is enabled but http_basic_password is empty.")
         if self.mcp_enabled and not self.mcp_auth_token:
             raise ConfigError(
                 "MCP is enabled but SDOG_MCP_AUTH_TOKEN is not set. "
@@ -142,6 +203,15 @@ class Config:
             p == Path(root).resolve() or Path(root).resolve() in p.parents
             for root in self.paths
         )
+
+    @classmethod
+    def field_metadata(cls) -> dict[str, frozenset[str]]:
+        return {
+            "editable": EDITABLE_CONFIG_FIELDS,
+            "env_only": ENV_ONLY_CONFIG_FIELDS,
+            "restart_required": RESTART_REQUIRED_CONFIG_FIELDS,
+            "hidden": HIDDEN_CONFIG_FIELDS,
+        }
 
 
 # ---------------------------------------------------------------------------

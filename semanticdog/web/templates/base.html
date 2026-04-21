@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "SemanticDog" }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="header">
+    <a href="/" class="brand">SemanticDog</a>
+    <nav class="nav">
+      {% set p = request.url.path %}
+      <a href="/dashboard" class="nav-link{% if p in ['/', '/dashboard'] %} active{% endif %}">Dashboard</a>
+      <a href="/setup"     class="nav-link{% if p == '/setup'     %} active{% endif %}">Setup</a>
+      <a href="/config"    class="nav-link{% if p == '/config'    %} active{% endif %}">Config</a>
+      <a href="/issues"    class="nav-link{% if p == '/issues'    %} active{% endif %}">Issues</a>
+      <a href="/history"   class="nav-link{% if p == '/history'   %} active{% endif %}">History</a>
+    </nav>
+  </header>
+
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="toast-container"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

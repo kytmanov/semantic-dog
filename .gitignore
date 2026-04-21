@@ -13,3 +13,5 @@ htmlcov/
 *.db-wal
 *.db-shm
 .DS_Store
+.playwright-mcp/
+config.yaml

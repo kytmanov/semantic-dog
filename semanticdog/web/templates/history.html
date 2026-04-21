@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="row-between" style="margin-bottom:0.25rem;">
+  <div>
+    <div class="page-title">Scan History</div>
+    <div class="page-sub">Completed and in-progress scans.</div>
+  </div>
+</div>
+
+{% if scans %}
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:80px;">Outcome</th>
+          <th>Started</th>
+          <th style="width:90px;">Duration</th>
+          <th style="width:80px;">Files</th>
+          <th style="width:70px;">Issues</th>
+          <th>Scope</th>
+          <th style="width:80px;">Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for scan in scans %}
+        {% set n_issues = (scan.corrupt or 0) + (scan.unreadable or 0) %}
+        <tr>
+          <td>
+            {% if not scan.finished_at %}
+              <span class="badge badge-amber">Incomplete</span>
+            {% elif n_issues > 0 %}
+              <span class="badge badge-red">Issues</span>
+            {% else %}
+              <span class="badge badge-green">Clean</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="text-1" style="font-size:0.8125rem;"
+                 data-time="{{ scan.started_at }}">{{ scan.started_at }}</div>
+            <div class="mono text-3" style="font-size:0.6875rem; margin-top:2px;"
+                 title="{{ scan.id }}">{{ scan.id[:8] }}…</div>
+          </td>
+          <td>
+            <span class="text-2" style="font-size:0.8125rem;"
+              data-dur-start="{{ scan.started_at }}"
+              data-dur-end="{{ scan.finished_at or '' }}">—</span>
+          </td>
+          <td>
+            <span class="text-1" style="font-size:0.875rem;">
+              {{ scan.total | default(0) | int | string }}
+            </span>
+          </td>
+          <td>
+            {% if n_issues > 0 %}
+              <span class="text-red" style="font-size:0.875rem; font-weight:600;">{{ n_issues }}</span>
+            {% else %}
+              <span class="text-3" style="font-size:0.875rem;">0</span>
+            {% endif %}
+          </td>
+          <td class="mono text-3" style="font-size:0.75rem; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+              title="{{ scan.scope or 'all configured paths' }}">
+            {{ scan.scope or "all configured paths" }}
+          </td>
+          <td class="text-3" style="font-size:0.75rem;">
+            {% if scan.files_per_sec and scan.files_per_sec > 0 %}
+              {{ "%.1f"|format(scan.files_per_sec) }} f/s
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+
+<div class="card">
+  <div class="empty-state">
+    <div class="empty-icon">📋</div>
+    <div class="empty-title">No scans recorded yet</div>
+    <div class="empty-desc">Run your first scan from the dashboard to see history here.</div>
+    <a href="/dashboard" class="btn btn-primary btn-sm" style="margin-top:0.75rem;">Go to Dashboard</a>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}

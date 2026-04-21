@@ -218,6 +218,26 @@ class TestRecord:
         assert row["scan_id"] == scan_id
 
 
+class TestIssueQueries:
+    def test_list_issue_files_filters_by_status(self, db):
+        db.record("/good.jpg", 1.0, 100, "ok")
+        db.record("/bad.jpg", 1.0, 100, "corrupt")
+        db.record("/blocked.jpg", 1.0, 100, "unreadable")
+
+        rows = db.list_issue_files(statuses=["corrupt"])
+
+        assert [row["path"] for row in rows] == ["/bad.jpg"]
+
+    def test_list_issue_files_filters_by_ext_and_prefix(self, db):
+        db.record("/photos/a.jpg", 1.0, 100, "corrupt")
+        db.record("/photos/b.png", 1.0, 100, "corrupt")
+        db.record("/docs/c.jpg", 1.0, 100, "corrupt")
+
+        rows = db.list_issue_files(statuses=["corrupt"], ext="jpg", path_prefix="/photos")
+
+        assert [row["path"] for row in rows] == ["/photos/a.jpg"]
+
+
 # ---------------------------------------------------------------------------
 # mark_notified
 # ---------------------------------------------------------------------------

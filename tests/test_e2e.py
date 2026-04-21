@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import textwrap
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -16,6 +19,7 @@ from semanticdog.db import Database
 from semanticdog.scanner import Scanner
 import semanticdog.server as server_module
 from semanticdog.server import app as http_app, build_app
+from semanticdog.runtime import AppRuntime
 
 from tests.fixtures.generators import (
     make_minimal_jpeg,
@@ -67,15 +71,12 @@ def _reset_server():
     server_module._cfg = None
     server_module._db = None
     server_module._last_trigger_time = 0.0
-    if server_module._scan_lock.locked():
-        try:
-            server_module._scan_lock.release()
-        except RuntimeError:
-            pass
+    server_module.app.state.runtime = AppRuntime()
     yield
     server_module._cfg = None
     server_module._db = None
     server_module._last_trigger_time = 0.0
+    server_module.app.state.runtime = AppRuntime()
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +121,19 @@ class TestScannerE2E:
         scanner = Scanner(cfg, db)
         stats = scanner.scan()
         assert stats.total >= 3
+
+    def test_progress_callback_receives_completed_snapshot(self, tmp_path):
+        make_minimal_jpeg(tmp_path / "photo.jpg")
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        scanner = Scanner(cfg, db)
+        snapshots = []
+
+        stats = scanner.scan(progress_callback=snapshots.append)
+
+        assert stats.total >= 1
+        assert snapshots[-1].state == "completed"
+        assert snapshots[-1].scan_id == stats.scan_id
 
     def test_second_scan_skips_unchanged_files(self, tmp_path):
         make_minimal_jpeg(tmp_path / "img.jpg")
@@ -396,17 +410,25 @@ class TestHttpServerE2E:
         async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
             r = await c.post("/trigger")
             assert r.status_code == 200
-            assert r.json()["status"] == "complete"
-            r2 = await c.get("/status")
+            assert r.json()["status"] == "started"
+
+            deadline = time.time() + 5
+            while True:
+                r2 = await c.get("/status")
+                if r2.json()["files_indexed"] >= 1 or time.time() >= deadline:
+                    break
+                await asyncio.sleep(0.05)
         assert r2.json()["files_indexed"] >= 1
 
     async def test_trigger_409_while_scanning(self, tmp_path):
         cfg = _cfg(tmp_path)
         db = Database(cfg.db_path)
         build_app(cfg, db)
-        async with server_module._scan_lock:
-            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
-                r = await c.post("/trigger")
+        runtime = http_app.state.runtime
+        runtime.scan_manager._current_snapshot = type("Snapshot", (), {"scan_id": "scan-1", "state": "running"})()
+        runtime.scan_manager._active_future = type("FutureStub", (), {"done": lambda self: False})()
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            r = await c.post("/trigger")
         assert r.status_code == 409
 
     async def test_metrics_shows_file_counts(self, tmp_path):
@@ -416,6 +438,9 @@ class TestHttpServerE2E:
         build_app(cfg, db)
         async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
             await c.post("/trigger")
+            deadline = time.time() + 5
+            while db.get_stats()["total"] == 0 and time.time() < deadline:
+                await asyncio.sleep(0.05)
             r = await c.get("/metrics")
         assert r.status_code == 200
         assert "sdog_files_total" in r.text
@@ -428,7 +453,160 @@ class TestHttpServerE2E:
         async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
             r = await c.post("/trigger")
         assert r.status_code == 200
+        deadline = time.time() + 5
+        while db.get_corrupt_files() == [] and time.time() < deadline:
+            await asyncio.sleep(0.05)
         assert db.get_corrupt_files() != []
+
+    async def test_api_scan_current_reports_background_scan(self, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            await c.post("/trigger")
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                r = await c.get("/api/scan/current")
+                payload = r.json()
+                if payload["current"] is not None or payload["last"] is not None:
+                    break
+                await asyncio.sleep(0.05)
+        assert payload["current"] is not None or payload["last"] is not None
+
+    async def test_notify_test_endpoint_works(self, tmp_path):
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+        with patch("semanticdog.server.Notifier.notify", return_value=[]):
+            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+                r = await c.post("/api/notify/test")
+        assert r.status_code == 200
+        assert r.json()["status"] == "sent"
+
+    async def test_restart_required_config_save_does_not_apply_live(self, tmp_path):
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(textwrap.dedent(f"""
+            paths:
+              - {tmp_path}
+            db_path: {tmp_path}/state.db
+            http_port: 8181
+            workers: 1
+            raw_workers: 1
+        """))
+        from semanticdog.config_store import ConfigStore
+
+        http_app.state.runtime.config_store = ConfigStore(str(config_path))
+        original_port = http_app.state.runtime.cfg.http_port
+
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            r = await c.put("/api/config", json={"http_port": 9191})
+
+        assert r.status_code == 200
+        assert r.json()["restart_required"] == ["http_port"]
+        assert http_app.state.runtime.cfg.http_port == original_port
+
+    async def test_paths_save_with_unchanged_db_path_applies_live_and_scans_all_roots(self, tmp_path):
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        make_minimal_jpeg(first / "one.jpg")
+        make_minimal_jpeg(second / "two.jpg")
+        state_db = tmp_path / "state.db"
+
+        cfg = _cfg(first)
+        cfg.trigger_cooldown_s = 0
+        cfg.db_path = str(state_db)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(textwrap.dedent(f"""
+            paths:
+              - {first}
+            db_path: {state_db}
+            workers: 1
+            raw_workers: 1
+        """))
+        from semanticdog.config_store import ConfigStore
+
+        http_app.state.runtime.config_store = ConfigStore(str(config_path))
+
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            save = await c.put(
+                "/api/config",
+                json={"paths": [str(first), str(second)], "db_path": str(state_db)},
+            )
+            assert save.status_code == 200
+            assert save.json()["restart_required"] == []
+
+            trigger = await c.post("/trigger")
+            assert trigger.status_code == 200
+
+        deadline = time.time() + 5
+        while db.get_stats()["total"] < 2 and time.time() < deadline:
+            await asyncio.sleep(0.05)
+
+        assert http_app.state.runtime.cfg.paths == [str(first), str(second)]
+        assert db.get_stats()["total"] == 2
+
+    async def test_completed_scan_notifications_are_marked_notified(self, tmp_path):
+        make_truncated_jpeg(tmp_path / "bad.jpg")
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+
+        with patch("semanticdog.services.scan_manager.Notifier.notify", return_value=[]):
+            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+                r = await c.post("/trigger")
+                assert r.status_code == 200
+
+        deadline = time.time() + 5
+        while http_app.state.runtime.scan_manager.is_running() and time.time() < deadline:
+            await asyncio.sleep(0.05)
+
+        assert db.get_new_corrupt() == []
+
+    async def test_completed_scan_notifications_only_include_current_scan(self, tmp_path):
+        older = tmp_path / "older"
+        current = tmp_path / "current"
+        older.mkdir()
+        current.mkdir()
+        make_truncated_jpeg(older / "old-bad.jpg")
+        make_truncated_jpeg(current / "new-bad.jpg")
+
+        cfg = _cfg(tmp_path)
+        cfg.trigger_cooldown_s = 0
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+
+        captured = []
+
+        def _capture(summary):
+            captured.append(summary)
+            return []
+
+        with patch("semanticdog.services.scan_manager.Notifier.notify", side_effect=_capture):
+            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+                first = await c.post("/trigger", json={"scope": str(older)})
+                assert first.status_code == 200
+                deadline = time.time() + 5
+                while http_app.state.runtime.scan_manager.is_running() and time.time() < deadline:
+                    await asyncio.sleep(0.05)
+
+                second = await c.post("/trigger", json={"scope": str(current)})
+                assert second.status_code == 200
+                deadline = time.time() + 5
+                while http_app.state.runtime.scan_manager.is_running() and time.time() < deadline:
+                    await asyncio.sleep(0.05)
+
+        assert len(captured) == 2
+        assert [row["path"] for row in captured[0].corrupt] == [str(older / "old-bad.jpg")]
+        assert [row["path"] for row in captured[1].corrupt] == [str(current / "new-bad.jpg")]
 
 
 # ---------------------------------------------------------------------------

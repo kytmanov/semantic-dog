@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from semanticdog.cli import app
+import semanticdog.cli as cli_module
 from tests.fixtures.generators import make_minimal_jpeg, make_minimal_png
 from tests.conftest import strip_ansi
 
@@ -49,11 +50,46 @@ class TestCliHelp:
     @pytest.mark.parametrize("cmd", [
         "scan", "estimate", "status", "list-scans", "report",
         "show-stats", "reset", "check-deps",
-        "db-export", "db-import", "verify-hashes",
+        "db-export", "db-import", "verify-hashes", "serve",
     ])
     def test_help_exits_zero(self, cmd):
         r = runner.invoke(app, [cmd, "--help"])
         assert r.exit_code == 0, f"{cmd} --help failed: {r.output}"
+
+
+class TestServeCommand:
+    def test_serve_uses_runtime_port(self, tmp_path, monkeypatch):
+        cfg = _cfg_yaml(tmp_path, db_path=tmp_path / "state.db", http_port=9876)
+        seen = {}
+
+        def _fake_run(app_obj, host, port):
+            seen["app"] = app_obj
+            seen["host"] = host
+            seen["port"] = port
+
+        monkeypatch.setattr("uvicorn.run", _fake_run)
+
+        r = runner.invoke(cli_module.app, ["serve", "--config", cfg])
+        assert r.exit_code == 0, r.output
+        assert seen["host"] == "0.0.0.0"
+        assert seen["port"] == 9876
+
+    def test_serve_starts_on_config_error(self, tmp_path, monkeypatch):
+        bad_cfg = tmp_path / "config.yaml"
+        bad_cfg.write_text(": bad: yaml: [\n")
+        seen = {}
+
+        def _fake_run(app_obj, host, port):
+            seen["app"] = app_obj
+            seen["host"] = host
+            seen["port"] = port
+
+        monkeypatch.setattr("uvicorn.run", _fake_run)
+
+        r = runner.invoke(cli_module.app, ["serve", "--config", str(bad_cfg), "--port", "9999"])
+        assert r.exit_code == 0, r.output
+        assert "Config warning" in r.output
+        assert seen["port"] == 9999
 
     def test_scan_has_dry_run(self):
         r = runner.invoke(app, ["scan", "--help"])

@@ -257,6 +257,39 @@ class Database:
         finally:
             conn.close()
 
+    def list_issue_files(
+        self,
+        *,
+        statuses: list[str] | None = None,
+        ext: str | None = None,
+        path_prefix: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            q = "SELECT * FROM files"
+            clauses: list[str] = []
+            params: list[Any] = []
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
+                clauses.append(f"status IN ({placeholders})")
+                params.extend(statuses)
+            if ext:
+                clauses.append("path LIKE ?")
+                params.append(f"%.{ext.lstrip('.')}")
+            if path_prefix:
+                clauses.append("path LIKE ?")
+                params.append(f"{path_prefix}%")
+            if clauses:
+                q += " WHERE " + " AND ".join(clauses)
+            q += " ORDER BY checked_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            rows = conn.execute(q, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def get_stats(self) -> dict[str, Any]:
         conn = self._connect()
         try:
