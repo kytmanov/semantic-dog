@@ -71,5 +71,80 @@ async function refreshDashboard() {
   }
 }
 
+function readFormPayload(form) {
+  const payload = {};
+  const formData = new FormData(form);
+  for (const [key, value] of formData.entries()) {
+    if (key === "paths" || key === "exclude") {
+      payload[key] = String(value)
+        .split("\n")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      continue;
+    }
+    if (value === "true") {
+      payload[key] = true;
+      continue;
+    }
+    if (value === "false") {
+      payload[key] = false;
+      continue;
+    }
+    if (value !== "" && /^-?\d+$/.test(String(value))) {
+      payload[key] = Number(value);
+      continue;
+    }
+    payload[key] = value;
+  }
+  return payload;
+}
+
+async function submitSettingsForm(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = readFormPayload(form);
+  const feedback = form.querySelector(".form-feedback");
+  if (feedback) {
+    feedback.textContent = "Validating...";
+  }
+
+  const validation = await fetch(form.dataset.endpoint + "/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  }).then((response) => response.json());
+
+  if (!validation.valid) {
+    if (feedback) {
+      feedback.textContent = validation.error || "Validation failed.";
+    }
+    return;
+  }
+
+  const saveResponse = await fetch(form.dataset.endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const saveBody = await saveResponse.json();
+
+  if (!saveResponse.ok) {
+    if (feedback) {
+      feedback.textContent = saveBody.error || "Save failed.";
+    }
+    return;
+  }
+
+  if (feedback) {
+    feedback.textContent = saveBody.restart_required?.length
+      ? `Saved. Restart required for: ${saveBody.restart_required.join(", ")}.`
+      : "Saved.";
+  }
+}
+
 refreshDashboard();
 setInterval(refreshDashboard, 5000);
+
+for (const form of document.querySelectorAll(".settings-form")) {
+  form.addEventListener("submit", submitSettingsForm);
+}

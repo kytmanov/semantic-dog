@@ -165,11 +165,13 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
         runtime = _get_runtime(request)
         setup = collect_setup_diagnostics(runtime)
         status_payload = await status(request)
+        store = runtime.config_store
+        config_view = store.get_view() if store is not None else {"effective": runtime.cfg or {}}
         if runtime.config_error or not setup["scan_roots"]:
             return templates.TemplateResponse(
                 request,
                 "setup.html",
-                {"title": "SemanticDog Setup", "setup": setup},
+                {"title": "SemanticDog Setup", "setup": setup, "config": config_view},
             )
         return templates.TemplateResponse(
             request,
@@ -203,10 +205,31 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     @target_app.get("/setup")
     async def setup_page(request: Request):
         runtime = _get_runtime(request)
+        store = runtime.config_store
+        config_view = store.get_view() if store is not None else {"effective": runtime.cfg or {}}
         return templates.TemplateResponse(
             request,
             "setup.html",
-            {"title": "SemanticDog Setup", "setup": collect_setup_diagnostics(runtime)},
+            {
+                "title": "SemanticDog Setup",
+                "setup": collect_setup_diagnostics(runtime),
+                "config": config_view,
+            },
+        )
+
+    @target_app.get("/config")
+    async def config_page(request: Request):
+        runtime = _get_runtime(request)
+        store = runtime.config_store
+        config_view = store.get_view() if store is not None else {"effective": runtime.cfg or {}, "sources": {}}
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            {
+                "title": "SemanticDog Configuration",
+                "config": config_view,
+                "restart_required": RESTART_REQUIRED_CONFIG_FIELDS,
+            },
         )
 
     @target_app.get("/issues")

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel hero-panel">
+  <h1>Configuration</h1>
+  <p class="lead">Edit supported settings, review env overrides, and see which changes require a restart.</p>
+</section>
+
+<section class="panel">
+  <form id="config-form" class="settings-form" data-endpoint="/api/config">
+    <div class="form-grid two-up">
+      <label>
+        <span>Scan Roots</span>
+        <textarea name="paths" rows="4">{{ (config.effective.paths or []) | join('\n') }}</textarea>
+        <small>One container-visible path per line.</small>
+      </label>
+
+      <label>
+        <span>Exclude Patterns</span>
+        <textarea name="exclude" rows="4">{{ (config.effective.exclude or []) | join('\n') }}</textarea>
+        <small>One glob pattern per line.</small>
+      </label>
+
+      <label>
+        <span>Database Path{% if config.sources.db_path == 'env' %} <em>(env override)</em>{% endif %}</span>
+        <input type="text" name="db_path" value="{{ config.effective.db_path }}" {% if config.sources.db_path == 'env' %}disabled{% endif %}>
+      </label>
+
+      <label>
+        <span>HTTP Port{% if config.sources.http_port == 'env' %} <em>(env override)</em>{% endif %}</span>
+        <input type="number" name="http_port" value="{{ config.effective.http_port }}" {% if config.sources.http_port == 'env' %}disabled{% endif %}>
+      </label>
+
+      <label>
+        <span>Workers</span>
+        <input type="number" name="workers" value="{{ config.effective.workers }}">
+      </label>
+
+      <label>
+        <span>RAW Workers</span>
+        <input type="number" name="raw_workers" value="{{ config.effective.raw_workers }}">
+      </label>
+
+      <label>
+        <span>Validation Timeout</span>
+        <input type="number" name="validation_timeout_s" value="{{ config.effective.validation_timeout_s }}">
+      </label>
+
+      <label>
+        <span>Force Recheck Days</span>
+        <input type="number" name="force_recheck_days" value="{{ config.effective.force_recheck_days }}">
+      </label>
+
+      <label>
+        <span>Trigger Cooldown</span>
+        <input type="number" name="trigger_cooldown_s" value="{{ config.effective.trigger_cooldown_s }}">
+      </label>
+
+      <label>
+        <span>Follow Symlinks</span>
+        <select name="follow_symlinks">
+          <option value="false" {% if not config.effective.follow_symlinks %}selected{% endif %}>Disabled</option>
+          <option value="true" {% if config.effective.follow_symlinks %}selected{% endif %}>Enabled</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Notification Email</span>
+        <input type="email" name="notify_email" value="{{ config.effective.notify_email }}">
+      </label>
+
+      <label>
+        <span>SMTP Host</span>
+        <input type="text" name="smtp_host" value="{{ config.effective.smtp_host }}">
+      </label>
+
+      <label>
+        <span>SMTP User</span>
+        <input type="text" name="smtp_user" value="{{ config.effective.smtp_user }}">
+      </label>
+
+      <label>
+        <span>SMTP TLS</span>
+        <select name="smtp_tls">
+          <option value="starttls" {% if config.effective.smtp_tls == 'starttls' %}selected{% endif %}>STARTTLS</option>
+          <option value="ssl" {% if config.effective.smtp_tls == 'ssl' %}selected{% endif %}>SSL</option>
+          <option value="none" {% if config.effective.smtp_tls == 'none' %}selected{% endif %}>None</option>
+        </select>
+      </label>
+
+      <label>
+        <span>SMTP Port</span>
+        <input type="number" name="smtp_port" value="{{ config.effective.smtp_port }}">
+      </label>
+
+      <label>
+        <span>Webhook URL</span>
+        <input type="text" name="webhook_url" value="{{ config.effective.webhook_url }}">
+      </label>
+
+      <label>
+        <span>Allow Private Webhook Targets</span>
+        <select name="webhook_allow_private">
+          <option value="false" {% if not config.effective.webhook_allow_private %}selected{% endif %}>Disabled</option>
+          <option value="true" {% if config.effective.webhook_allow_private %}selected{% endif %}>Enabled</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit">Save Configuration</button>
+      <p id="config-feedback" class="form-feedback"></p>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Value Sources</h2>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Source</th>
+          <th>Restart Required</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for field, source in config.sources.items() %}
+        <tr>
+          <td>{{ field }}</td>
+          <td>{{ source }}</td>
+          <td>{{ 'yes' if field in restart_required else 'no' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

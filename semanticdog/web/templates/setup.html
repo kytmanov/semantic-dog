@@ -47,4 +47,46 @@
   <p>No setup warnings detected.</p>
   {% endif %}
 </section>
+
+<section class="panel">
+  <h2>First-Run Configuration</h2>
+  <form id="setup-form" class="settings-form" data-endpoint="/api/config">
+    <div class="form-grid two-up">
+      <label>
+        <span>Scan Roots</span>
+        <textarea name="paths" rows="4">{{ (config.effective.paths or []) | join('\n') }}</textarea>
+      </label>
+
+      <label>
+        <span>Database Path</span>
+        <input type="text" name="db_path" value="{{ config.effective.db_path }}">
+      </label>
+
+      <label>
+        <span>Workers</span>
+        <input type="number" name="workers" value="{{ config.effective.workers }}">
+      </label>
+
+      <label>
+        <span>RAW Workers</span>
+        <input type="number" name="raw_workers" value="{{ config.effective.raw_workers }}">
+      </label>
+
+      <label>
+        <span>Validation Timeout</span>
+        <input type="number" name="validation_timeout_s" value="{{ config.effective.validation_timeout_s }}">
+      </label>
+
+      <label>
+        <span>Force Recheck Days</span>
+        <input type="number" name="force_recheck_days" value="{{ config.effective.force_recheck_days }}">
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit">Save Setup</button>
+      <p id="setup-feedback" class="form-feedback"></p>
+    </div>
+  </form>
+</section>
 {% endblock %}
