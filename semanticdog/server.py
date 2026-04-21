@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import secrets
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -67,12 +69,47 @@ def _unconfigured_response(runtime: AppRuntime) -> JSONResponse:
     )
 
 
+def _is_public_route(path: str) -> bool:
+    return path == "/health"
+
+
+def _is_authorized(request: Request, runtime: AppRuntime) -> bool:
+    cfg = runtime.cfg
+    if cfg is None or not cfg.http_basic_enabled:
+        return True
+
+    header = request.headers.get("authorization", "")
+    if not header.startswith("Basic "):
+        return False
+
+    try:
+        decoded = base64.b64decode(header[6:]).decode("utf-8")
+    except Exception:
+        return False
+    username, sep, password = decoded.partition(":")
+    if not sep:
+        return False
+    return secrets.compare_digest(username, cfg.http_basic_username) and secrets.compare_digest(
+        password, cfg.http_basic_password
+    )
+
+
 def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     target_app = FastAPI(title="SemanticDog", version="0.1.0")
     target_app.state.runtime = runtime or AppRuntime()
     target_app.state.mcp_mounted = False
 
     _mount_mcp(target_app, target_app.state.runtime)
+
+    @target_app.middleware("http")
+    async def require_auth(request: Request, call_next):
+        runtime = _get_runtime(request)
+        if _is_public_route(request.url.path) or _is_authorized(request, runtime):
+            return await call_next(request)
+        return Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="SemanticDog"'},
+        )
 
     # -----------------------------------------------------------------------
     # /health

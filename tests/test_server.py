@@ -62,6 +62,21 @@ class TestHealthEndpoint:
         assert r.status_code == 200
         assert r.json()["status"] == "ok"
 
+    async def test_health_stays_public_with_auth_enabled(self, tmp_path):
+        cfg = Config(
+            paths=[str(tmp_path)],
+            db_path=str(tmp_path / "state.db"),
+            workers=1,
+            raw_workers=1,
+            http_basic_enabled=True,
+            http_basic_username="admin",
+            http_basic_password="secret",
+        )
+        auth_app = build_app(cfg, Database(cfg.db_path))
+        async with AsyncClient(transport=ASGITransport(app=auth_app), base_url="http://test") as c:
+            r = await c.get("/health")
+        assert r.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # /metrics

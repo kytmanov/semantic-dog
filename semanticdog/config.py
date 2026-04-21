@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,9 @@ _DEFAULTS: dict[str, Any] = {
     "hash_full_threshold_mb": 10,
     "memory_limit_mb": 0,
     "http_port": 9090,
+    "http_basic_enabled": False,
+    "http_basic_username": "",
+    "http_basic_password": "",
     # Notifications
     "notify_email": "",
     "smtp_host": "",
@@ -93,6 +97,9 @@ class Config:
     # Resources
     memory_limit_mb: int = 0
     http_port: int = 9090
+    http_basic_enabled: bool = False
+    http_basic_username: str = ""
+    http_basic_password: str = ""
 
     # Notifications
     notify_email: str = ""
@@ -129,6 +136,11 @@ class Config:
             raise ConfigError(f"raw_workers must be >= 1, got {self.raw_workers}")
         if self.validation_timeout_s < 1:
             raise ConfigError(f"validation_timeout_s must be >= 1, got {self.validation_timeout_s}")
+        if self.http_basic_enabled:
+            if not self.http_basic_username:
+                raise ConfigError("HTTP basic auth is enabled but http_basic_username is empty.")
+            if not self.http_basic_password:
+                raise ConfigError("HTTP basic auth is enabled but http_basic_password is empty.")
         if self.mcp_enabled and not self.mcp_auth_token:
             raise ConfigError(
                 "MCP is enabled but SDOG_MCP_AUTH_TOKEN is not set. "

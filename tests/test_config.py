@@ -163,6 +163,25 @@ class TestValidation:
         cfg = Config(paths=["/photos", "/documents"])
         cfg.validate()  # must not raise
 
+    def test_http_basic_enabled_requires_username(self):
+        cfg = Config(paths=["/x"], http_basic_enabled=True, http_basic_password="secret")
+        with pytest.raises(ConfigError, match="http_basic_username"):
+            cfg.validate()
+
+    def test_http_basic_enabled_requires_password(self):
+        cfg = Config(paths=["/x"], http_basic_enabled=True, http_basic_username="admin")
+        with pytest.raises(ConfigError, match="http_basic_password"):
+            cfg.validate()
+
+    def test_http_basic_enabled_with_credentials_ok(self):
+        cfg = Config(
+            paths=["/x"],
+            http_basic_enabled=True,
+            http_basic_username="admin",
+            http_basic_password="secret",
+        )
+        cfg.validate()
+
 
 class TestPathAllowlist:
     def test_path_under_root_allowed(self):
