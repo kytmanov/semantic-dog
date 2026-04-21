@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import RESTART_REQUIRED_CONFIG_FIELDS
+from .notify import Notifier, ScanSummary
 from .runtime import AppRuntime
 from .services.diagnostics import collect_setup_diagnostics
 
@@ -410,7 +411,26 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             "current": None if current is None else current.__dict__,
             "last": None if last is None else last.__dict__,
             "last_error": manager.last_error() if manager is not None else None,
+            "notification_errors": manager.last_notification_errors() if manager is not None else [],
         }
+
+    @target_app.post("/api/notify/test")
+    async def api_notify_test(request: Request) -> JSONResponse:
+        runtime = _get_runtime(request)
+        cfg = runtime.cfg
+        if cfg is None:
+            return JSONResponse(status_code=503, content={"error": "server not configured"})
+
+        summary = ScanSummary(
+            scan_id="test-notification",
+            scope=",".join(cfg.paths) if cfg.paths else "/data",
+            duration_s=0.1,
+            total_checked=1,
+            corrupt=[],
+            unreadable=[],
+        )
+        errors = Notifier(cfg).notify(summary)
+        return JSONResponse({"status": "sent" if not errors else "partial", "errors": errors})
 
     @target_app.get("/api/issues")
     async def api_issues(

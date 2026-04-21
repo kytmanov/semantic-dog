@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 
+from semanticdog.notify import Notifier, ScanSummary
 from semanticdog.scanner import ScanProgressSnapshot, Scanner
 
 
@@ -29,6 +32,7 @@ class ScanManager:
         self._current_snapshot: ScanProgressSnapshot | None = None
         self._last_snapshot: ScanProgressSnapshot | None = None
         self._last_error: str | None = None
+        self._last_notification_errors: list[str] = []
 
     def is_running(self) -> bool:
         with self._lock:
@@ -45,6 +49,10 @@ class ScanManager:
     def last_error(self) -> str | None:
         with self._lock:
             return self._last_error
+
+    def last_notification_errors(self) -> list[str]:
+        with self._lock:
+            return list(self._last_notification_errors)
 
     def start(self, scope: str | None = None) -> ScanStartResult:
         return self._launch(scope=scope, resume_scan_id=None)
@@ -74,14 +82,46 @@ class ScanManager:
         try:
             scanner = Scanner(self._cfg, self._db)
             if resume_scan_id:
-                scanner.scan(resume_scan_id=resume_scan_id, progress_callback=self._on_progress)
+                stats = scanner.scan(resume_scan_id=resume_scan_id, progress_callback=self._on_progress)
             else:
                 paths = [scope] if scope else None
-                scanner.scan(paths=paths, progress_callback=self._on_progress)
+                stats = scanner.scan(paths=paths, progress_callback=self._on_progress)
+            self._send_notifications(stats)
         except Exception as e:
             with self._lock:
                 self._last_error = str(e)
             raise
+
+    def _send_notifications(self, stats) -> None:
+        if stats is None or not stats.scan_id:
+            return
+        scan = self._db.get_scan(stats.scan_id)
+        if scan is None:
+            return
+
+        duration_s = max(time.monotonic() - getattr(stats, "start_time", time.monotonic()), 0.0)
+        started_at = scan.get("started_at")
+        finished_at = scan.get("finished_at")
+        if started_at and finished_at:
+            try:
+                duration_s = max(
+                    (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds(),
+                    0.0,
+                )
+            except ValueError:
+                pass
+
+        summary = ScanSummary(
+            scan_id=stats.scan_id,
+            scope=scan.get("scope") or ",".join(self._cfg.paths),
+            duration_s=duration_s,
+            total_checked=stats.total,
+            corrupt=self._db.list_issue_files(statuses=["corrupt"], limit=50),
+            unreadable=self._db.list_issue_files(statuses=["unreadable"], limit=50),
+        )
+        errors = Notifier(self._cfg).notify(summary)
+        with self._lock:
+            self._last_notification_errors = errors
 
     def _on_progress(self, snapshot: ScanProgressSnapshot) -> None:
         with self._lock:

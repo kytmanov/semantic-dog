@@ -243,6 +243,13 @@ class TestApiEndpoints:
         assert r.status_code == 200
         assert r.json()["current"]["scan_id"] == "scan-42"
 
+    async def test_api_notify_test_returns_result(self, configured_app):
+        with patch("semanticdog.server.Notifier.notify", return_value=[]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                r = await c.post("/api/notify/test")
+        assert r.status_code == 200
+        assert r.json()["status"] == "sent"
+
     async def test_api_scans_returns_history(self, configured_app, db):
         scan_id = db.create_scan(scope="/photos")
         db.finish_scan(scan_id, total=1, corrupt=0, unreadable=0, files_per_sec=1.0)

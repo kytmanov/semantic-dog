@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -43,6 +44,7 @@ class TestScanManager:
             time.sleep(0.01)
 
         assert manager.last_snapshot() is not None
+        manager._active_future.result(timeout=5)
 
     def test_duplicate_start_rejected_while_running(self, cfg, db):
         manager = ScanManager(cfg, db)
@@ -120,3 +122,22 @@ class TestScanManager:
         manager._on_progress(snapshot)
 
         assert manager.last_error() == "boom"
+
+    def test_completed_scan_sends_notifications(self, cfg, db, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        manager = ScanManager(cfg, db)
+
+        with patch("semanticdog.services.scan_manager.Notifier.notify", return_value=[]) as notify:
+            result = manager.start()
+            assert result.accepted is True
+            manager._active_future.result(timeout=5)
+
+        assert notify.call_count == 1
+
+    def test_notification_errors_are_recorded(self, cfg, db):
+        manager = ScanManager(cfg, db)
+        scan_id = db.create_scan(scope="/photos")
+        with patch("semanticdog.services.scan_manager.Notifier.notify", return_value=["SMTP: boom"]):
+            manager._send_notifications(type("Stats", (), {"scan_id": scan_id, "elapsed_s": lambda self: 1.0, "total": 1})())
+
+        assert manager.last_notification_errors() == ["SMTP: boom"]

@@ -148,3 +148,20 @@ setInterval(refreshDashboard, 5000);
 for (const form of document.querySelectorAll(".settings-form")) {
   form.addEventListener("submit", submitSettingsForm);
 }
+
+const testNotifyButton = document.getElementById("test-notify-button");
+if (testNotifyButton) {
+  testNotifyButton.addEventListener("click", async () => {
+    const feedback = document.getElementById("config-feedback");
+    if (feedback) {
+      feedback.textContent = "Sending test notification...";
+    }
+    const response = await fetch("/api/notify/test", { method: "POST", headers: { Accept: "application/json" } });
+    const body = await response.json();
+    if (feedback) {
+      feedback.textContent = body.errors?.length
+        ? `Notification finished with errors: ${body.errors.join(", ")}`
+        : "Test notification sent.";
+    }
+  });
+}

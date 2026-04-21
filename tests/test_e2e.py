@@ -7,6 +7,7 @@ import json
 import textwrap
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -472,6 +473,16 @@ class TestHttpServerE2E:
                     break
                 await asyncio.sleep(0.05)
         assert payload["current"] is not None or payload["last"] is not None
+
+    async def test_notify_test_endpoint_works(self, tmp_path):
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+        with patch("semanticdog.server.Notifier.notify", return_value=[]):
+            async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+                r = await c.post("/api/notify/test")
+        assert r.status_code == 200
+        assert r.json()["status"] == "sent"
 
 
 # ---------------------------------------------------------------------------
