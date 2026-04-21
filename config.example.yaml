@@ -25,7 +25,7 @@ log_path: /data/logs/sdog.log
 log_max_bytes: 52428800   # 50 MB
 log_backup_count: 5
 
-# Cron schedule (supercronic format)
+# Internal scheduler cron expression
 schedule: "0 2 * * *"
 
 # Worker counts
@@ -51,8 +51,8 @@ hash_full_threshold_mb: 10   # full SHA-256 below this; partial above
 # Memory watchdog (requires psutil; 0 = disabled)
 memory_limit_mb: 0
 
-# HTTP server port (Prometheus /metrics, POST /trigger, /mcp)
-http_port: 9090
+# HTTP server port (Web UI, API, Prometheus /metrics, MCP)
+http_port: 8181
 trigger_cooldown_s: 60
 
 # HTTP basic auth for the Web UI and API

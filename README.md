@@ -4,7 +4,7 @@ Your NAS keeps your files safe from hardware failure. SemanticDog checks they're
 
 ZFS and RAID verify that bits on disk match what was written. That's not the same as verifying a JPEG can be decoded, a RAW file parsed, or a PDF opened. Bit-rot, partial writes, and failed copies can produce files that pass every checksum but are silently broken at the application layer — you won't find out until you need them.
 
-SemanticDog lets you run scans on demand or from an external scheduler, tells you which files are corrupt, and alerts you before you need them.
+SemanticDog lets you run scans on demand or on a built-in schedule, tells you which files are corrupt, and alerts you before you need them.
 
 It also ships with a built-in Web UI for Docker/NAS deployments: setup, dashboard, issues, history, and configuration pages all run from the same Python service.
 
@@ -45,9 +45,10 @@ Run it with persistent config/state/log mounts and your media library mounted re
 ```bash
 docker run -d \
   --name semanticdog \
-  -p 9090:9090 \
+  -p 8181:8181 \
   -e SDOG_PATHS=/library/photos:/library/documents \
   -e SDOG_DB_PATH=/data/state/state.db \
+  -e SDOG_HTTP_PORT=8181 \
   -e SDOG_HTTP_BASIC_ENABLED=true \
   -e SDOG_HTTP_BASIC_USERNAME=admin \
   -e SDOG_HTTP_BASIC_PASSWORD=change-me \
@@ -59,7 +60,7 @@ docker run -d \
   semanticdog
 ```
 
-Open `http://<nas-host>:9090/` and go through the setup flow.
+Open `http://<nas-host>:8181/` and go through the setup flow.
 
 Important NAS notes:
 
@@ -131,13 +132,15 @@ Audio: MP3 · FLAC · WAV · AAC
 
 ## Scheduled scanning
 
-SemanticDog does not run an internal scheduler yet. For NAS and Docker deployments, use your NAS task scheduler, cron, or a sidecar like `supercronic` to call `sdog scan`.
+SemanticDog includes an internal scheduler. Set `schedule` in `config.yaml` or in the Web UI to run background scans automatically.
 
-```bash
-0 2 * * * sdog scan --config /data/config/config.yaml >> /data/logs/sdog.log 2>&1
+```yaml
+schedule: "0 2 * * *"
 ```
 
-On subsequent runs, only changed files are re-validated. A 100k-photo library might take an hour on first scan and two minutes after that.
+The expression uses standard 5-field cron syntax: minute, hour, day-of-month, month, day-of-week.
+
+Leave `schedule` empty to disable automatic scans. On subsequent runs, only changed files are re-validated. A 100k-photo library might take an hour on the first scan and a couple of minutes after that.
 
 ---
 
@@ -173,7 +176,7 @@ mcp_allow_write: true   # lets agents trigger scans and reset records
 ```
 
 ```bash
-SDOG_MCP_AUTH_TOKEN=your-secret sdog serve --port 9090
+SDOG_MCP_AUTH_TOKEN=your-secret sdog serve --port 8181
 ```
 
 **Add to Claude Code** (`~/.claude/settings.json`):
@@ -182,7 +185,7 @@ SDOG_MCP_AUTH_TOKEN=your-secret sdog serve --port 9090
   "mcpServers": {
     "semanticdog": {
       "type": "sse",
-      "url": "http://localhost:9090/mcp/sse",
+      "url": "http://localhost:8181/mcp/sse",
       "headers": { "Authorization": "Bearer your-secret" }
     }
   }
@@ -225,7 +228,7 @@ Every option has a matching `SDOG_*` environment variable. Env vars always overr
 ## HTTP API and Prometheus
 
 ```bash
-sdog serve --port 9090
+sdog serve --port 8181
 ```
 
 - `GET /metrics` — Prometheus scrape endpoint
@@ -347,7 +350,7 @@ GET  /mcp/sse     → SSE stream (requires mcp_enabled=true + mcp_auth_token)
 | `raw_decode_depth` | `SDOG_RAW_DECODE_DEPTH` | `structure` |
 | `validation_timeout_s` | `SDOG_VALIDATION_TIMEOUT_S` | `120` |
 | `force_recheck_days` | `SDOG_FORCE_RECHECK_DAYS` | `90` |
-| `http_port` | `SDOG_HTTP_PORT` | `9090` |
+| `http_port` | `SDOG_HTTP_PORT` | `8181` |
 | `notify_email` | `SDOG_NOTIFY_EMAIL` | `""` |
 | `smtp_pass` | `SDOG_SMTP_PASS` | `""` |
 | `webhook_url` | `SDOG_WEBHOOK_URL` | `""` |

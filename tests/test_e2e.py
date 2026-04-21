@@ -493,7 +493,7 @@ class TestHttpServerE2E:
             paths:
               - {tmp_path}
             db_path: {tmp_path}/state.db
-            http_port: 9090
+            http_port: 8181
             workers: 1
             raw_workers: 1
         """))

@@ -34,7 +34,7 @@ _DEFAULTS: dict[str, Any] = {
     "enable_hash": False,
     "hash_full_threshold_mb": 10,
     "memory_limit_mb": 0,
-    "http_port": 9090,
+    "http_port": 8181,
     "trigger_cooldown_s": 60,
     "http_basic_enabled": False,
     "http_basic_username": "",
@@ -133,7 +133,7 @@ class Config:
 
     # Resources
     memory_limit_mb: int = 0
-    http_port: int = 9090
+    http_port: int = 8181
     trigger_cooldown_s: int = 60
     http_basic_enabled: bool = False
     http_basic_username: str = ""

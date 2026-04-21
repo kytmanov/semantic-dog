@@ -66,7 +66,7 @@ def serve(
 
     resolved = config or _find_config()
     runtime = load_runtime(resolved)
-    listen_port = port or (runtime.cfg.http_port if runtime.cfg is not None else 9090)
+    listen_port = port or (runtime.cfg.http_port if runtime.cfg is not None else 8181)
 
     if runtime.config_error:
         typer.echo(f"Config warning: {runtime.config_error}", err=True)

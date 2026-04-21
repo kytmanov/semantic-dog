@@ -216,7 +216,7 @@ class TestApiEndpoints:
 
     async def test_api_config_save_does_not_apply_restart_required_fields_live(self, configured_app, tmp_path):
         config_path = tmp_path / "config.yaml"
-        config_path.write_text(f"paths:\n  - {tmp_path}\nhttp_port: 9090\n")
+        config_path.write_text(f"paths:\n  - {tmp_path}\nhttp_port: 8181\n")
         app.state.runtime.config_store = __import__("semanticdog.config_store", fromlist=["ConfigStore"]).ConfigStore(str(config_path))
         original_port = app.state.runtime.cfg.http_port
 

@@ -24,10 +24,10 @@ RUN mkdir -p /data/config /data/state /data/logs \
 
 USER semanticdog
 
-EXPOSE 9090
+EXPOSE 8181
 VOLUME ["/data/config", "/data/state", "/data/logs"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import os, urllib.request; port = int(os.getenv('SDOG_HTTP_PORT', '9090')); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read()"
+  CMD python -c "import os, urllib.request; port = int(os.getenv('SDOG_HTTP_PORT', '8181')); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read()"
 
 CMD ["sdog", "serve", "--host", "0.0.0.0"]
