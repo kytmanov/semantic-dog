@@ -341,6 +341,8 @@ class Scanner:
                 error=prior["error"],
                 scan_id=scan_id,
             )
+            processed_count = prior["total"]
+            started_at = existing.get("started_at") or started_at
 
             pending_paths = self.db.get_all_pending_paths(scan_id)
             scope = existing.get("scope")
@@ -453,13 +455,12 @@ class Scanner:
             raise
         finally:
             if not interrupted and not self._shutdown.is_set() and not failed:
-                elapsed = time.monotonic() - stats.start_time
                 self.db.finish_scan(
                     scan_id,
-                    total=processed_count,
+                    total=stats.total,
                     corrupt=stats.corrupt,
                     unreadable=stats.unreadable,
-                    files_per_sec=processed_count / elapsed if elapsed > 0.001 else 0.0,
+                    files_per_sec=stats.files_per_sec(),
                 )
                 self.db.cleanup_scan_queue(scan_id)
                 self._emit_progress(

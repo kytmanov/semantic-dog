@@ -60,6 +60,15 @@ class ScanManager:
     def resume(self, scan_id: str) -> ScanStartResult:
         return self._launch(scope=None, resume_scan_id=scan_id)
 
+    def shutdown(self) -> None:
+        with self._lock:
+            future = self._active_future
+            if future is not None and not future.done():
+                return
+            executor = self._executor
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sdog-scan")
+        executor.shutdown(wait=False)
+
     def _launch(self, scope: str | None, resume_scan_id: str | None) -> ScanStartResult:
         with self._lock:
             if self._active_future is not None and not self._active_future.done():

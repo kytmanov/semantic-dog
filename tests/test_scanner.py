@@ -501,6 +501,56 @@ class TestScannerResume:
 
         assert db.get_all_pending_paths(interrupted_id) == []
 
+    def test_resume_progress_starts_from_prior_processed_count(self, cfg, db, tmp_path):
+        files = [make_minimal_jpeg(tmp_path / f"f{i}.jpg") for i in range(3)]
+        Scanner(cfg, db).scan([str(tmp_path)])
+
+        interrupted_id = db.create_scan(scope=str(tmp_path))
+        db.queue_paths(interrupted_id, [str(f) for f in files])
+        db.record(str(files[0]), files[0].stat().st_mtime, files[0].stat().st_size, "ok", scan_id=interrupted_id)
+        db.mark_queue_done(interrupted_id, [str(files[0])])
+
+        snapshots: list[ScanProgressSnapshot] = []
+        Scanner(cfg, db).scan(resume_scan_id=interrupted_id, progress_callback=snapshots.append)
+
+        assert snapshots[0].state == "starting"
+        assert snapshots[0].processed == 1
+        assert snapshots[-1].processed >= 3
+
+    def test_resume_uses_original_started_at_in_progress_snapshots(self, cfg, db, tmp_path):
+        file_path = make_minimal_jpeg(tmp_path / "resume.jpg")
+        interrupted_id = db.create_scan(scope=str(tmp_path))
+        db.queue_paths(interrupted_id, [str(file_path)])
+        original_started_at = db.get_scan(interrupted_id)["started_at"]
+
+        snapshots: list[ScanProgressSnapshot] = []
+        Scanner(cfg, db).scan(resume_scan_id=interrupted_id, progress_callback=snapshots.append)
+
+        assert snapshots[0].started_at == original_started_at
+
+    def test_finish_scan_persists_recorded_total_not_processed_counter(self, cfg, db, tmp_path, monkeypatch):
+        make_minimal_jpeg(tmp_path / "toctou.jpg")
+        scanner = Scanner(cfg, db)
+
+        original_stat = os.stat
+        calls = {"count": 0}
+
+        def _fake_stat(path, *args, **kwargs):
+            result = original_stat(path, *args, **kwargs)
+            if str(path).endswith("toctou.jpg"):
+                calls["count"] += 1
+                if calls["count"] >= 2:
+                    return type("StatResult", (), {"st_mtime": result.st_mtime + 1, "st_size": result.st_size})()
+            return result
+
+        monkeypatch.setattr("semanticdog.scanner.os.stat", _fake_stat)
+
+        stats = scanner.scan([str(tmp_path)])
+        scan = db.get_scan(stats.scan_id)
+
+        assert stats.toctou_discards >= 1
+        assert scan["total"] == stats.total == 0
+
     def test_double_resume_pending_count_shrinks(self, cfg, db, tmp_path):
         """
         Second resume sees fewer pending files than first, not the same count.

@@ -420,6 +420,18 @@ class TestTriggerEndpoint:
         assert data["status"] == "started"
         assert data["scan_id"] == "scan-123"
 
+    async def test_config_save_replaces_scan_manager_without_leaking_executor(self, configured_app, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"paths:\n  - {tmp_path}\ndb_path: {tmp_path / 'state.db'}\nworkers: 1\nraw_workers: 1\n")
+        app.state.runtime.config_store = __import__("semanticdog.config_store", fromlist=["ConfigStore"]).ConfigStore(str(config_path))
+        previous_manager = app.state.runtime.scan_manager
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.put("/api/config", json={"workers": 2})
+
+        assert r.status_code == 200
+        assert app.state.runtime.scan_manager is not previous_manager
+
     async def test_trigger_cooldown_returns_429(self, configured_app):
         server_module._last_trigger_time = time.monotonic()  # simulate recent trigger
         app.state.runtime.cfg.trigger_cooldown_s = 9999

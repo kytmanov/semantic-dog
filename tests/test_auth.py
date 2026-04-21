@@ -33,6 +33,21 @@ class TestHttpBasicAuth:
 
         assert r.status_code == 200
 
+    async def test_favicon_remains_public(self, tmp_path):
+        cfg = Config(
+            paths=[str(tmp_path)],
+            db_path=str(tmp_path / "state.db"),
+            http_basic_enabled=True,
+            http_basic_username="admin",
+            http_basic_password="secret",
+        )
+        app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/favicon.ico")
+
+        assert r.status_code == 204
+
     async def test_protected_route_returns_401_without_credentials(self, tmp_path):
         cfg = Config(
             paths=[str(tmp_path)],

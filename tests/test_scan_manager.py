@@ -164,3 +164,20 @@ class TestScanManager:
             manager._send_notifications(type("Stats", (), {"scan_id": scan_id, "start_time": time.monotonic(), "total": 1})())
 
         assert manager.last_notification_errors() == ["SMTP: boom"]
+
+    def test_shutdown_replaces_idle_executor(self, cfg, db):
+        manager = ScanManager(cfg, db)
+        original = manager._executor
+
+        manager.shutdown()
+
+        assert manager._executor is not original
+
+    def test_shutdown_ignores_active_scan(self, cfg, db):
+        manager = ScanManager(cfg, db)
+        original = manager._executor
+        manager._active_future = type("FutureStub", (), {"done": lambda self: False})()
+
+        manager.shutdown()
+
+        assert manager._executor is original

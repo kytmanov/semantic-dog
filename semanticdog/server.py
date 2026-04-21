@@ -78,7 +78,7 @@ def _unconfigured_response(runtime: AppRuntime) -> JSONResponse:
 
 
 def _is_public_route(path: str) -> bool:
-    return path == "/health" or path.startswith("/static/")
+    return path in {"/health", "/favicon.ico"} or path.startswith("/static/")
 
 
 def _is_authorized(request: Request, runtime: AppRuntime) -> bool:
@@ -450,6 +450,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 else:
                     from .services.scan_manager import ScanManager
 
+                    runtime.scan_manager.shutdown()
                     runtime.scan_manager = ScanManager(runtime.cfg, runtime.db)
                     runtime.scheduler.update_config(runtime.cfg, runtime.scan_manager)
         except Exception as e:
@@ -599,7 +600,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             if current is not None:
                 scan_id = current.scan_id
                 break
-            time.sleep(0.01)
+            await asyncio.sleep(0.01)
 
         return JSONResponse({"status": "started", "scan_id": scan_id})
 
