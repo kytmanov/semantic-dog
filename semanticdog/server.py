@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -9,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from .runtime import AppRuntime
+from .services.diagnostics import collect_setup_diagnostics
 
 if TYPE_CHECKING:
     from .config import Config
@@ -25,6 +27,7 @@ app = FastAPI(title="SemanticDog", version="0.1.0")
 # Route handlers use request.app.state.runtime instead.
 _cfg: "Config | None" = None
 _db: "Database | None" = None
+_scan_lock = asyncio.Lock()
 _last_trigger_time: float = 0.0
 
 
@@ -155,6 +158,55 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+    @target_app.get("/api/app")
+    async def api_app(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        manager = runtime.scan_manager
+        current = manager.current_snapshot() if manager is not None else None
+        return {
+            "ready": runtime.ready,
+            "config_path": runtime.config_path,
+            "config_error": runtime.config_error,
+            "db_error": runtime.db_error,
+            "current_scan": None if current is None else current.__dict__,
+        }
+
+    @target_app.get("/api/setup")
+    async def api_setup(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return collect_setup_diagnostics(runtime)
+
+    @target_app.get("/api/scan/current")
+    async def api_scan_current(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        manager = runtime.scan_manager
+        current = manager.current_snapshot() if manager is not None else None
+        last = manager.last_snapshot() if manager is not None else None
+        return {
+            "current": None if current is None else current.__dict__,
+            "last": None if last is None else last.__dict__,
+            "last_error": manager.last_error() if manager is not None else None,
+        }
+
+    @target_app.get("/api/scans")
+    async def api_scans(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        db = runtime.db
+        if db is None:
+            return {"scans": []}
+        return {"scans": db.list_scans(limit=20)}
+
+    @target_app.get("/api/scans/{scan_id}")
+    async def api_scan_by_id(scan_id: str, request: Request) -> JSONResponse:
+        runtime = _get_runtime(request)
+        db = runtime.db
+        if db is None:
+            return JSONResponse(status_code=404, content={"error": "scan not found"})
+        scan = db.get_scan(scan_id)
+        if scan is None:
+            return JSONResponse(status_code=404, content={"error": "scan not found"})
+        return JSONResponse(scan)
 
     # -----------------------------------------------------------------------
     # /trigger

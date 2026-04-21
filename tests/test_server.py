@@ -149,6 +149,67 @@ class TestStatusEndpoint:
         assert r.json()["files_indexed"] == 1
 
 
+class TestApiEndpoints:
+    async def test_api_app_returns_runtime_state(self, configured_app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/app")
+        assert r.status_code == 200
+        assert r.json()["ready"] is True
+
+    async def test_api_setup_returns_diagnostics(self, configured_app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/setup")
+        assert r.status_code == 200
+        assert "scan_roots" in r.json()
+        assert "dependencies" in r.json()
+
+    async def test_api_scan_current_returns_snapshot(self, configured_app, tmp_path):
+        runtime = app.state.runtime
+        runtime.scan_manager._current_snapshot = ScanProgressSnapshot(
+            state="running",
+            scan_id="scan-42",
+            scope=str(tmp_path),
+            discovered_total=4,
+            processed=1,
+            skipped=0,
+            ok=1,
+            corrupt=0,
+            unreadable=0,
+            unsupported=0,
+            error=0,
+            files_per_sec=1.0,
+            eta_s=3.0,
+            started_at="2026-01-01T00:00:00+00:00",
+            finished_at=None,
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/scan/current")
+        assert r.status_code == 200
+        assert r.json()["current"]["scan_id"] == "scan-42"
+
+    async def test_api_scans_returns_history(self, configured_app, db):
+        scan_id = db.create_scan(scope="/photos")
+        db.finish_scan(scan_id, total=1, corrupt=0, unreadable=0, files_per_sec=1.0)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/scans")
+        assert r.status_code == 200
+        assert r.json()["scans"][0]["id"] == scan_id
+
+    async def test_api_scans_by_id_returns_scan(self, configured_app, db):
+        scan_id = db.create_scan(scope="/photos")
+        db.finish_scan(scan_id, total=1, corrupt=0, unreadable=0, files_per_sec=1.0)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get(f"/api/scans/{scan_id}")
+        assert r.status_code == 200
+        assert r.json()["id"] == scan_id
+
+    async def test_api_scans_by_id_returns_404(self, configured_app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/scans/missing")
+        assert r.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # /trigger
 # ---------------------------------------------------------------------------

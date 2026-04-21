@@ -457,6 +457,22 @@ class TestHttpServerE2E:
             await asyncio.sleep(0.05)
         assert db.get_corrupt_files() != []
 
+    async def test_api_scan_current_reports_background_scan(self, tmp_path):
+        make_minimal_jpeg(tmp_path / "img.jpg")
+        cfg = _cfg(tmp_path)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            await c.post("/trigger")
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                r = await c.get("/api/scan/current")
+                payload = r.json()
+                if payload["current"] is not None or payload["last"] is not None:
+                    break
+                await asyncio.sleep(0.05)
+        assert payload["current"] is not None or payload["last"] is not None
+
 
 # ---------------------------------------------------------------------------
 # E2E: config loading from YAML
