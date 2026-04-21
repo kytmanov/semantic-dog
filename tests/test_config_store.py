@@ -21,13 +21,14 @@ class TestConfigStore:
         assert view["raw"]["future_key"] == 42
         assert view["sources"]["paths"] == "yaml"
 
-    def test_validate_update_rejects_unsupported_fields(self, tmp_path):
+    def test_validate_update_accepts_schedule_field(self, tmp_path):
         config_path = tmp_path / "config.yaml"
         config_path.write_text("paths:\n  - /library\n")
         store = ConfigStore(str(config_path))
 
-        with pytest.raises(ConfigError, match="Unsupported config fields"):
-            store.validate_update({"schedule": "* * * * *"})
+        cfg = store.validate_update({"schedule": "* * * * *"})
+
+        assert cfg.schedule == "* * * * *"
 
     def test_save_preserves_unknown_keys(self, tmp_path):
         config_path = tmp_path / "config.yaml"

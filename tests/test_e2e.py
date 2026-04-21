@@ -509,6 +509,51 @@ class TestHttpServerE2E:
         assert r.json()["restart_required"] == ["http_port"]
         assert http_app.state.runtime.cfg.http_port == original_port
 
+    async def test_paths_save_with_unchanged_db_path_applies_live_and_scans_all_roots(self, tmp_path):
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        make_minimal_jpeg(first / "one.jpg")
+        make_minimal_jpeg(second / "two.jpg")
+        state_db = tmp_path / "state.db"
+
+        cfg = _cfg(first)
+        cfg.trigger_cooldown_s = 0
+        cfg.db_path = str(state_db)
+        db = Database(cfg.db_path)
+        build_app(cfg, db)
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(textwrap.dedent(f"""
+            paths:
+              - {first}
+            db_path: {state_db}
+            workers: 1
+            raw_workers: 1
+        """))
+        from semanticdog.config_store import ConfigStore
+
+        http_app.state.runtime.config_store = ConfigStore(str(config_path))
+
+        async with AsyncClient(transport=ASGITransport(app=http_app), base_url="http://test") as c:
+            save = await c.put(
+                "/api/config",
+                json={"paths": [str(first), str(second)], "db_path": str(state_db)},
+            )
+            assert save.status_code == 200
+            assert save.json()["restart_required"] == []
+
+            trigger = await c.post("/trigger")
+            assert trigger.status_code == 200
+
+        deadline = time.time() + 5
+        while db.get_stats()["total"] < 2 and time.time() < deadline:
+            await asyncio.sleep(0.05)
+
+        assert http_app.state.runtime.cfg.paths == [str(first), str(second)]
+        assert db.get_stats()["total"] == 2
+
     async def test_completed_scan_notifications_are_marked_notified(self, tmp_path):
         make_truncated_jpeg(tmp_path / "bad.jpg")
         cfg = _cfg(tmp_path)

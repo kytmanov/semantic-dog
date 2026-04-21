@@ -78,6 +78,7 @@ EDITABLE_CONFIG_FIELDS = frozenset(
         "validation_timeout_s",
         "force_recheck_days",
         "http_port",
+        "schedule",
         "trigger_cooldown_s",
         "notify_email",
         "smtp_host",
@@ -97,7 +98,7 @@ RESTART_REQUIRED_CONFIG_FIELDS = frozenset(
     {"db_path", "http_port", "http_basic_enabled", "http_basic_username", "http_basic_password"}
 )
 
-HIDDEN_CONFIG_FIELDS = frozenset({"log_path", "log_max_bytes", "log_backup_count", "schedule"})
+HIDDEN_CONFIG_FIELDS = frozenset({"log_path", "log_max_bytes", "log_backup_count"})
 
 
 @dataclass

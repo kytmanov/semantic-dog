@@ -70,6 +70,23 @@
           <div class="form-hint">Re-scan OK files after N days.</div>
         </div>
 
+        <div class="form-group schedule-group">
+          <label class="form-label">Schedule</label>
+          <div class="schedule-controls">
+            <select id="schedule-preset" aria-label="Schedule Preset">
+              <option value="">Disabled</option>
+              <option value="0 * * * *">Hourly</option>
+              <option value="0 */6 * * *">Every 6 hours</option>
+              <option value="0 2 * * *">Daily at 2:00 AM</option>
+              <option value="0 2 * * 0">Weekly on Sunday at 2:00 AM</option>
+              <option value="__custom__">Custom cron…</option>
+            </select>
+            <input id="schedule-input" type="text" name="schedule" value="{{ config.effective.schedule or '' }}" placeholder="0 2 * * *" spellcheck="false" autocomplete="off" class="mono">
+          </div>
+          <div class="form-hint" id="schedule-description">Uses 5-field cron syntax: minute hour day-of-month month day-of-week.</div>
+          <div class="form-hint">Choose a preset or enter a custom 5-field cron expression. Leave blank to disable automatic scans.</div>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Trigger Cooldown (s)</label>
           <input type="number" name="trigger_cooldown_s" value="{{ config.effective.trigger_cooldown_s }}" min="0">

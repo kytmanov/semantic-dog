@@ -1,9 +1,11 @@
-"""HTTP server — FastAPI: /metrics, /health, /trigger, /status, /mcp."""
+"""HTTP server - FastAPI: /metrics, /health, /trigger, /status, /mcp."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 import secrets
 import time
@@ -128,14 +130,58 @@ def _dashboard_banner(status_payload: dict[str, Any], setup: dict[str, Any], run
             "detail": "No current corruption or access issues are recorded in the indexed library.",
         }
     return {
-        "state": "Configuration needed",
-        "detail": "Finish setup and run the first scan to establish a baseline.",
+        "state": "Ready to scan",
+        "detail": "SemanticDog is configured. Run the first scan to establish a baseline.",
     }
 
 
+def _changed_restart_fields(payload: dict[str, Any], current_cfg: "Config | None") -> set[str]:
+    if current_cfg is None:
+        return set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
+    return {
+        field
+        for field in set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
+        if payload[field] != getattr(current_cfg, field)
+    }
+
+
+def _live_runtime_config(current_cfg: "Config | None", loaded_cfg: "Config") -> "Config":
+    if current_cfg is None:
+        return loaded_cfg
+    preserved = {field: getattr(current_cfg, field) for field in RESTART_REQUIRED_CONFIG_FIELDS}
+    return replace(loaded_cfg, **preserved)
+
+
+def _ensure_runtime_services(runtime: AppRuntime) -> None:
+    if runtime.cfg is None or runtime.db is None:
+        return
+    if runtime.scan_manager is None:
+        from .services.scan_manager import ScanManager
+
+        runtime.scan_manager = ScanManager(runtime.cfg, runtime.db)
+    if runtime.scheduler is None:
+        from .services.scheduler import SchedulerService
+
+        runtime.scheduler = SchedulerService(runtime.cfg, runtime.scan_manager)
+
+
 def create_app(runtime: AppRuntime | None = None) -> FastAPI:
-    target_app = FastAPI(title="SemanticDog", version="0.1.0")
-    target_app.state.runtime = runtime or AppRuntime()
+    runtime = runtime or AppRuntime()
+    _ensure_runtime_services(runtime)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        runtime = app.state.runtime
+        if runtime.scheduler is not None:
+            runtime.scheduler.start()
+        try:
+            yield
+        finally:
+            if runtime.scheduler is not None:
+                runtime.scheduler.stop()
+
+    target_app = FastAPI(title="SemanticDog", version="0.1.0", lifespan=lifespan)
+    target_app.state.runtime = runtime
     target_app.state.mcp_mounted = False
 
     web_root = Path(__file__).parent / "web"
@@ -161,6 +207,10 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     @target_app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @target_app.get("/favicon.ico")
+    async def favicon() -> Response:
+        return Response(status_code=204)
 
     @target_app.get("/")
     async def index(request: Request):
@@ -322,6 +372,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             scans = db.list_scans(limit=1)
             last_scan = scans[0] if scans else None
             manager = runtime.scan_manager
+            scheduler = runtime.scheduler
             current_scan = manager.current_snapshot() if manager is not None else None
             return {
                 "status": "scanning" if current_scan and current_scan.state in {"starting", "running"} else "idle",
@@ -329,6 +380,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 "by_status": stats.get("by_status", {}),
                 "last_scan": last_scan,
                 "current_scan": None if current_scan is None else current_scan.__dict__,
+                "scheduler": None if scheduler is None else scheduler.as_dict(),
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
@@ -381,18 +433,25 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             return JSONResponse(status_code=500, content={"error": "config store unavailable"})
 
         payload = await request.json()
+        current_cfg = runtime.cfg
         try:
             saved = store.save(payload)
             runtime.config_path = saved["path"]
             runtime.config_store = store
-            restart_fields = set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
-            if not restart_fields:
-                runtime.cfg = store.load_effective()
-                runtime.config_error = None
-            if not restart_fields and runtime.db is not None:
-                from .services.scan_manager import ScanManager
+            restart_fields = _changed_restart_fields(payload, current_cfg)
+            loaded_cfg = store.load_effective()
+            runtime.cfg = _live_runtime_config(current_cfg, loaded_cfg)
+            runtime.config_error = None
+            if runtime.db is not None:
+                if runtime.scheduler is None or runtime.scan_manager is None:
+                    _ensure_runtime_services(runtime)
+                    if runtime.scheduler is not None:
+                        runtime.scheduler.start()
+                else:
+                    from .services.scan_manager import ScanManager
 
-                runtime.scan_manager = ScanManager(runtime.cfg, runtime.db)
+                    runtime.scan_manager = ScanManager(runtime.cfg, runtime.db)
+                    runtime.scheduler.update_config(runtime.cfg, runtime.scan_manager)
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -565,6 +624,7 @@ def build_app(cfg: "Config", db: "Database") -> FastAPI:
         config_store=ConfigStore(),
         scan_manager=ScanManager(cfg, db),
     )
+    _ensure_runtime_services(runtime)
     app.state.runtime = runtime
     _mount_mcp(app, runtime)
     return app

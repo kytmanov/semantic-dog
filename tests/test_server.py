@@ -62,6 +62,11 @@ class TestHealthEndpoint:
         assert r.status_code == 200
         assert r.json()["status"] == "ok"
 
+    async def test_favicon_returns_empty_success(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/favicon.ico")
+        assert r.status_code == 204
+
     async def test_health_stays_public_with_auth_enabled(self, tmp_path):
         cfg = Config(
             paths=[str(tmp_path)],
@@ -163,6 +168,13 @@ class TestStatusEndpoint:
             r = await c.get("/status")
         assert r.json()["files_indexed"] == 1
 
+    async def test_status_includes_scheduler_state(self, configured_app):
+        async with AsyncClient(transport=ASGITransport(app=configured_app), base_url="http://test") as c:
+            r = await c.get("/status")
+        assert r.status_code == 200
+        assert "scheduler" in r.json()
+        assert r.json()["scheduler"]["enabled"] is True
+
 
 class TestApiEndpoints:
     async def test_api_app_returns_runtime_state(self, configured_app):
@@ -183,12 +195,12 @@ class TestApiEndpoints:
         assert r.json()["raw"]["workers"] == 3
         assert r.json()["sources"]["workers"] == "yaml"
 
-    async def test_api_config_validate_rejects_hidden_field(self, configured_app):
+    async def test_api_config_validate_accepts_schedule_field(self, configured_app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.post("/api/config/validate", json={"schedule": "* * * * *"})
 
         assert r.status_code == 200
-        assert r.json()["valid"] is False
+        assert r.json()["valid"] is True
 
     async def test_api_config_save_persists_editable_fields(self, configured_app, tmp_path):
         config_path = tmp_path / "config.yaml"
@@ -214,6 +226,31 @@ class TestApiEndpoints:
         assert r.status_code == 200
         assert r.json()["restart_required"] == ["http_port"]
         assert app.state.runtime.cfg.http_port == original_port
+
+    async def test_api_config_save_applies_paths_live_when_restart_field_is_unchanged(self, configured_app, tmp_path):
+        first = tmp_path / "one"
+        second = tmp_path / "two"
+        first.mkdir()
+        second.mkdir()
+        state_db = tmp_path / "state.db"
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            f"paths:\n  - {first}\ndb_path: {state_db}\nworkers: 1\nraw_workers: 1\n"
+        )
+        app.state.runtime.config_store = __import__("semanticdog.config_store", fromlist=["ConfigStore"]).ConfigStore(str(config_path))
+        app.state.runtime.cfg.db_path = str(state_db)
+        app.state.runtime.cfg.paths = [str(first)]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={"paths": [str(first), str(second)], "db_path": str(state_db)},
+            )
+
+        assert r.status_code == 200
+        assert r.json()["restart_required"] == []
+        assert app.state.runtime.cfg.paths == [str(first), str(second)]
+        assert app.state.runtime.cfg.db_path == str(state_db)
 
     async def test_api_config_save_blocked_while_scan_running(self, configured_app):
         runtime = app.state.runtime

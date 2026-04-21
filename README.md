@@ -412,6 +412,8 @@ db.import_json(records, force=False, path_map={"/old": "/new"})
 ```bash
 uv run pytest                       # 427 tests
 uv run pytest tests/test_e2e.py -v  # E2E only (real files, no mocks)
+uv sync --extra dev                 # install Playwright test dependency
+uv run pytest tests/test_playwright_e2e.py -v  # real browser UI E2E
 ```
 
 ### Known limitations

@@ -64,6 +64,12 @@ class TestWebUi:
         assert r.status_code == 200
         assert "Configuration" in r.text
         assert "Save Configuration" in r.text
+        assert "schedule" in r.text
+        assert 'id="schedule-preset"' in r.text
+        assert 'id="schedule-input"' in r.text
+        assert 'id="schedule-description"' in r.text
+        assert "schedule-group" in r.text
+        assert "Daily at 2:00 AM" in r.text
 
     async def test_config_page_shows_env_override_marker(self, tmp_path, monkeypatch):
         monkeypatch.setenv("SDOG_HTTP_PORT", "9876")
@@ -114,6 +120,47 @@ class TestWebUi:
         assert r.status_code == 200
         assert "Configuration needed" in r.text
 
+    async def test_dashboard_shows_ready_to_scan_banner_before_first_scan(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert "Ready to scan" in r.text
+        assert "Next scan" in r.text
+
+    async def test_dashboard_renders_scheduler_card_details(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert 'id="scheduler-card"' in r.text
+        assert 'id="scheduler-badge"' in r.text
+        assert 'id="next-scan-relative"' in r.text
+        assert 'id="scheduler-last-run"' in r.text
+        assert 'id="scheduler-last-result"' in r.text
+        assert 'id="scheduler-cron"' in r.text
+        assert "0 2 * * *" in r.text
+        assert "No runs yet" in r.text
+        assert "Never" in r.text
+
+    async def test_dashboard_shows_scheduler_error_for_invalid_cron(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), schedule="not-a-cron")
+        app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert "Schedule unavailable" in r.text
+        assert "Fix the schedule expression in Configuration." in r.text
+        assert 'id="scheduler-error" style="display:none;"' not in r.text
+
     async def test_dashboard_shows_healthy_banner_after_scan(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
         db = Database(cfg.db_path)
@@ -137,3 +184,4 @@ class TestWebUi:
 
         assert r.status_code == 200
         assert "progress-fill" in r.text
+        assert "scheduler-card" in r.text

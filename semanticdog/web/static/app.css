@@ -199,6 +199,65 @@ p  { margin: 0; }
 .status-name { font-size: 1rem; font-weight: 600; }
 .status-detail { font-size: 0.8125rem; color: var(--t2); margin-top: 3px; }
 
+.scheduler-card {
+  padding: 1rem 1.25rem 1.1rem;
+}
+
+.scheduler-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.scheduler-next {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--t1);
+}
+
+.scheduler-rel {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.scheduler-grid {
+  margin-top: 0.95rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.scheduler-grid > div {
+  min-width: 0;
+  padding: 0.85rem 0.9rem;
+  border-radius: var(--r-lg);
+  background: var(--s2);
+  border: 1px solid var(--bd);
+}
+
+.scheduler-meta-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 0.3rem;
+}
+
+.scheduler-meta-value {
+  font-size: 0.875rem;
+  color: var(--t1);
+  word-break: break-word;
+}
+
+.scheduler-error {
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--red-bd);
+  background: var(--red-bg);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
 /* ── Stat cards ──────────────────────────────────────────────── */
 
 .stat-num {
@@ -331,6 +390,18 @@ p  { margin: 0; }
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  min-width: 0;
+}
+
+.schedule-group {
+  grid-column: span 2;
+}
+
+.schedule-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
+  gap: 0.625rem;
+  align-items: start;
 }
 
 .form-label {
@@ -451,7 +522,7 @@ select {
 
 /* ── Tables ──────────────────────────────────────────────────── */
 
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; max-width: 100%; }
 
 table.data-table {
   width: 100%;
@@ -611,7 +682,21 @@ table.data-table {
 }
 
 @media (max-width: 520px) {
+  .header {
+    height: auto;
+    align-items: flex-start;
+    flex-direction: column;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+  .nav { width: 100%; flex-wrap: wrap; }
   .form-row-2, .form-row-3 { grid-template-columns: 1fr; }
+  .schedule-group { grid-column: auto; }
+  .schedule-controls { grid-template-columns: 1fr; }
+  .data-table th, .data-table td {
+    padding: 0.5rem;
+    overflow-wrap: anywhere;
+  }
   .search-input { width: 100%; }
   .filter-bar { flex-direction: column; align-items: flex-start; }
 }

@@ -30,6 +30,76 @@ function fmtEta(seconds) {
   return `~${Math.ceil(s / 60)}m remaining`;
 }
 
+function fmtDateTime(iso) {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return iso;
+  return dt.toLocaleString();
+}
+
+function fmtRelativeTime(iso) {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return null;
+
+  const deltaS = Math.round((dt.getTime() - Date.now()) / 1000);
+  const absS = Math.abs(deltaS);
+  if (absS < 5) return deltaS >= 0 ? 'in a moment' : 'just now';
+
+  const affix = (value) => deltaS >= 0 ? `in ${value}` : `${value} ago`;
+  if (absS < 60) return affix(`${absS}s`);
+
+  const m = Math.floor(absS / 60);
+  if (m < 60) return affix(`${m}m`);
+
+  const h = Math.floor(m / 60);
+  if (h < 24) return affix(`${h}h`);
+
+  return affix(`${Math.floor(h / 24)}d`);
+}
+
+function fmtNextRun(iso) {
+  if (!iso) return 'Scheduler enabled';
+  return `Next scan ${fmtDateTime(iso)}`;
+}
+
+const SCHEDULE_PRESETS = [
+  {
+    value: '',
+    description: 'Automatic scans are disabled. Use Run Scan manually when needed.',
+  },
+  {
+    value: '0 * * * *',
+    description: 'Runs at the start of every hour.',
+  },
+  {
+    value: '0 */6 * * *',
+    description: 'Runs every 6 hours at minute 00.',
+  },
+  {
+    value: '0 2 * * *',
+    description: 'Runs every day at 2:00 AM.',
+  },
+  {
+    value: '0 2 * * 0',
+    description: 'Runs every Sunday at 2:00 AM.',
+  },
+];
+
+function scheduleDescription(value) {
+  const cron = String(value || '').trim();
+  const preset = SCHEDULE_PRESETS.find((item) => item.value === cron);
+  if (preset) return preset.description;
+  if (!cron) return SCHEDULE_PRESETS[0].description;
+  return 'Custom cron schedule. Uses 5 fields: minute hour day-of-month month day-of-week.';
+}
+
+function matchingSchedulePreset(value) {
+  const cron = String(value || '').trim();
+  const preset = SCHEDULE_PRESETS.find((item) => item.value === cron);
+  return preset ? preset.value : '__custom__';
+}
+
 async function fetchJson(path) {
   try {
     const r = await fetch(path, { headers: { Accept: 'application/json' } });
@@ -91,6 +161,38 @@ function stopFastPoll() {
 function setDotClass(dot, cls) {
   if (!dot) return;
   dot.className = 'status-dot ' + cls;
+}
+
+function dashboardBanner(status) {
+  const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
+  if (status.status === 'scanning') {
+    return {
+      state: 'Scan running',
+      detail: 'SemanticDog is validating files in the background. You can refresh safely.',
+    };
+  }
+  if (hasBad) {
+    return {
+      state: 'Issues found',
+      detail: 'Corrupt or unreadable files need attention. Check the latest scan details below.',
+    };
+  }
+  if ((status.status === 'idle') && (status.files_indexed ?? 0) > 0) {
+    return {
+      state: 'Healthy',
+      detail: 'No current corruption or access issues are recorded in the indexed library.',
+    };
+  }
+  if (status.status === 'degraded' || status.status === 'error') {
+    return {
+      state: 'Configuration needed',
+      detail: 'The server started in degraded mode. Review setup warnings before scanning.',
+    };
+  }
+  return {
+    state: 'Ready to scan',
+    detail: 'SemanticDog is configured. Run the first scan to establish a baseline.',
+  };
 }
 
 function updateScanSection(current, last) {
@@ -161,6 +263,90 @@ function updateScanSection(current, last) {
   }
 }
 
+function updateSchedulerCard(scheduler) {
+  const nextScanInfo = document.getElementById('next-scan-info');
+  const nextScanRelative = document.getElementById('next-scan-relative');
+  const schedulerBadge = document.getElementById('scheduler-badge');
+  const schedulerLastRun = document.getElementById('scheduler-last-run');
+  const schedulerLastResult = document.getElementById('scheduler-last-result');
+  const schedulerCron = document.getElementById('scheduler-cron');
+  const schedulerError = document.getElementById('scheduler-error');
+
+  const enabled = Boolean(scheduler?.enabled);
+  const hasError = Boolean(scheduler?.last_error);
+
+  if (nextScanInfo) {
+    if (hasError) nextScanInfo.textContent = 'Schedule unavailable';
+    else if (enabled) nextScanInfo.textContent = fmtNextRun(scheduler?.next_run_at);
+    else nextScanInfo.textContent = 'Scheduler disabled';
+  }
+
+  if (nextScanRelative) {
+    if (hasError) nextScanRelative.textContent = 'Fix the schedule expression in Configuration.';
+    else if (enabled && scheduler?.next_run_at) {
+      nextScanRelative.textContent = fmtRelativeTime(scheduler.next_run_at) || 'scheduled automatically';
+    } else if (enabled) {
+      nextScanRelative.textContent = 'scheduled automatically';
+    } else {
+      nextScanRelative.textContent = 'waiting for a schedule';
+    }
+  }
+
+  if (schedulerBadge) {
+    schedulerBadge.className = hasError
+      ? 'badge badge-red'
+      : enabled
+        ? 'badge badge-indigo'
+        : 'badge badge-gray';
+    schedulerBadge.textContent = hasError ? 'Error' : enabled ? 'Active' : 'Disabled';
+  }
+
+  if (schedulerLastRun) {
+    schedulerLastRun.textContent = scheduler?.last_run_at ? fmtDateTime(scheduler.last_run_at) : 'Never';
+  }
+
+  if (schedulerLastResult) {
+    schedulerLastResult.textContent = scheduler?.last_trigger_result || 'No runs yet';
+  }
+
+  if (schedulerCron) {
+    schedulerCron.textContent = scheduler?.cron || 'disabled';
+  }
+
+  if (schedulerError) {
+    if (hasError) {
+      schedulerError.textContent = scheduler.last_error;
+      schedulerError.style.display = '';
+    } else {
+      schedulerError.textContent = '';
+      schedulerError.style.display = 'none';
+    }
+  }
+}
+
+function initScheduleField() {
+  const input = document.getElementById('schedule-input');
+  const preset = document.getElementById('schedule-preset');
+  const description = document.getElementById('schedule-description');
+  if (!input || !preset || !description) return;
+
+  function syncFromValue() {
+    const current = String(input.value || '').trim();
+    const selected = matchingSchedulePreset(current);
+    if (preset.value !== selected) preset.value = selected;
+    input.readOnly = preset.value !== '__custom__';
+    description.textContent = scheduleDescription(current);
+  }
+
+  preset.addEventListener('change', () => {
+    if (preset.value !== '__custom__') input.value = preset.value;
+    syncFromValue();
+  });
+
+  input.addEventListener('input', syncFromValue);
+  syncFromValue();
+}
+
 async function refreshDashboard() {
   if (!document.getElementById('runtime-status')) return;
 
@@ -176,10 +362,12 @@ async function refreshDashboard() {
     const crEl  = document.getElementById('count-corrupt');
     const urEl  = document.getElementById('count-unreadable');
     const dot   = document.getElementById('status-dot');
+    const bannerState = document.getElementById('banner-state');
+    const bannerDetail = document.getElementById('banner-detail');
 
     if (rtEl) rtEl.textContent = status.status;
     if (fiEl) fiEl.textContent = (status.files_indexed ?? 0).toLocaleString();
-    if (okEl) okEl.textContent = (status.by_status?.ok ?? 0).toLocaleString();
+    if (okEl) okEl.textContent = (status.files_indexed ?? 0).toLocaleString();
     if (crEl) crEl.textContent = (status.by_status?.corrupt ?? 0).toLocaleString();
     if (urEl) urEl.textContent = (status.by_status?.unreadable ?? 0).toLocaleString();
 
@@ -195,6 +383,11 @@ async function refreshDashboard() {
     else if (s === 'idle' && (status.files_indexed ?? 0) > 0) setDotClass(dot, 'dot-green');
     else if (s === 'degraded' || s === 'error')           setDotClass(dot, 'dot-amber');
     else                                                  setDotClass(dot, 'dot-gray');
+
+    const banner = dashboardBanner(status);
+    if (bannerState) bannerState.textContent = banner.state;
+    if (bannerDetail) bannerDetail.textContent = banner.detail;
+    updateSchedulerCard(status.scheduler);
   }
 
   if (scanState) {
@@ -342,6 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshTimestamps();
   setInterval(refreshTimestamps, 30000);
 
+  initScheduleField();
   refreshDashboard();
   setInterval(refreshDashboard, 5000);
 

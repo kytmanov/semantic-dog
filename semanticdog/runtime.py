@@ -11,6 +11,7 @@ from .config_store import ConfigStore, find_config_path
 if TYPE_CHECKING:
     from .db import Database
     from .config_store import ConfigStore
+    from .services.scheduler import SchedulerService
     from .services.scan_manager import ScanManager
 
 
@@ -25,6 +26,7 @@ class AppRuntime:
     db_error: str | None = None
     config_store: "ConfigStore | None" = None
     scan_manager: "ScanManager | None" = None
+    scheduler: "SchedulerService | None" = None
 
     @property
     def ready(self) -> bool:
@@ -63,10 +65,12 @@ def load_runtime(config_path: str | None = None) -> AppRuntime:
 
     try:
         from .db import Database
+        from .services.scheduler import SchedulerService
         from .services.scan_manager import ScanManager
 
         runtime.db = Database(cfg.db_path)
         runtime.scan_manager = ScanManager(cfg, runtime.db)
+        runtime.scheduler = SchedulerService(cfg, runtime.scan_manager)
     except Exception as e:
         runtime.db_error = str(e)
 

@@ -35,14 +35,81 @@
   </div>
 </div>
 
+{% set scheduler = status.get("scheduler") %}
+<div class="card scheduler-card" id="scheduler-card">
+  <div class="row-between scheduler-head">
+    <div>
+      <div class="card-label">Scheduler</div>
+      <div class="scheduler-next" id="next-scan-info">
+        {% if scheduler and scheduler.get("last_error") %}
+          Schedule unavailable
+        {% elif scheduler and scheduler.get("next_run_at") %}
+          Next scan {{ scheduler.get("next_run_at") }}
+        {% elif scheduler and scheduler.get("enabled") %}
+          Scheduler enabled
+        {% else %}
+          Scheduler disabled
+        {% endif %}
+      </div>
+      <div class="scheduler-rel text-3" id="next-scan-relative">
+        {% if scheduler and scheduler.get("last_error") %}
+          Fix the schedule expression in Configuration.
+        {% elif scheduler and scheduler.get("next_run_at") %}
+          scheduled automatically
+        {% else %}
+          waiting for a schedule
+        {% endif %}
+      </div>
+    </div>
+    <div class="badge {% if scheduler and scheduler.get('last_error') %}badge-red{% elif scheduler and scheduler.get('enabled') %}badge-indigo{% else %}badge-gray{% endif %}" id="scheduler-badge">
+      {% if scheduler and scheduler.get('last_error') %}
+        Error
+      {% elif scheduler and scheduler.get('enabled') %}
+        Active
+      {% else %}
+        Disabled
+      {% endif %}
+    </div>
+  </div>
+  <div class="grid-3 scheduler-grid">
+    <div>
+      <div class="scheduler-meta-label">Last scheduled run</div>
+      <div class="scheduler-meta-value" id="scheduler-last-run">
+        {% if scheduler and scheduler.get("last_run_at") %}
+          {{ scheduler.get("last_run_at") }}
+        {% else %}
+          Never
+        {% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="scheduler-meta-label">Last result</div>
+      <div class="scheduler-meta-value" id="scheduler-last-result">
+        {{ scheduler.get("last_trigger_result") if scheduler and scheduler.get("last_trigger_result") else "No runs yet" }}
+      </div>
+    </div>
+    <div>
+      <div class="scheduler-meta-label">Schedule</div>
+      <div class="scheduler-meta-value mono" id="scheduler-cron">
+        {{ scheduler.get("cron") if scheduler and scheduler.get("cron") else "disabled" }}
+      </div>
+    </div>
+  </div>
+  <div class="scheduler-error text-red" id="scheduler-error" {% if not scheduler or not scheduler.get("last_error") %}style="display:none;"{% endif %}>
+    {% if scheduler and scheduler.get("last_error") %}
+      {{ scheduler.get("last_error") }}
+    {% endif %}
+  </div>
+</div>
+
 {# ── Stat cards ───────────────────────────────────────────── #}
 <div class="grid-3">
   <div class="card" style="padding:1rem;">
-    <div class="card-label">OK</div>
-    <div class="stat-num text-green" id="count-ok">
+    <div class="card-label">Indexed</div>
+    <div class="stat-num" id="count-ok">
       {{ status.get("by_status", {}).get("ok", 0) | int }}
     </div>
-    <div class="stat-label">files verified</div>
+    <div class="stat-label">files indexed</div>
   </div>
 
   {% set n_corrupt    = status.get("by_status", {}).get("corrupt",    0) | int %}

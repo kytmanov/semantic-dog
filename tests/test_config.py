@@ -212,9 +212,10 @@ class TestValidation:
     def test_config_field_metadata_exposes_sets(self):
         metadata = Config.field_metadata()
         assert "trigger_cooldown_s" in metadata["editable"]
+        assert "schedule" in metadata["editable"]
         assert "smtp_pass" in metadata["env_only"]
         assert "http_port" in metadata["restart_required"]
-        assert "schedule" in metadata["hidden"]
+        assert "schedule" not in metadata["hidden"]
 
 
 class TestPathAllowlist:
