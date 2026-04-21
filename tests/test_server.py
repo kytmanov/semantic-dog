@@ -12,6 +12,7 @@ from httpx import AsyncClient, ASGITransport
 import semanticdog.server as server_module
 from semanticdog.server import app, build_app, create_app
 from semanticdog.config import Config
+from semanticdog.config_store import ConfigStore
 from semanticdog.db import Database
 from semanticdog.runtime import AppRuntime
 from semanticdog.scanner import ScanProgressSnapshot
@@ -195,7 +196,11 @@ class TestApiEndpoints:
         assert r.json()["raw"]["workers"] == 3
         assert r.json()["sources"]["workers"] == "yaml"
 
-    async def test_api_config_validate_accepts_schedule_field(self, configured_app):
+    async def test_api_config_validate_accepts_schedule_field(self, configured_app, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("paths:\n  - /library\n")
+        app.state.runtime.config_store = ConfigStore(str(config_path))
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.post("/api/config/validate", json={"schedule": "* * * * *"})
 
