@@ -43,6 +43,33 @@ class TestWebUi:
         assert r.status_code == 200
         assert "Scan Roots" in r.text
 
+    async def test_issues_page_renders_issue_table(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        db = Database(cfg.db_path)
+        db.record(str(tmp_path / "bad.jpg"), 1.0, 100, "corrupt", error="Unexpected EOF")
+        app = create_app(AppRuntime(cfg=cfg, db=db))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/issues")
+
+        assert r.status_code == 200
+        assert "Issues" in r.text
+        assert "Unexpected EOF" in r.text
+
+    async def test_history_page_renders_scan_table(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        db = Database(cfg.db_path)
+        scan_id = db.create_scan(scope=str(tmp_path))
+        db.finish_scan(scan_id, total=2, corrupt=1, unreadable=0, files_per_sec=1.0)
+        app = create_app(AppRuntime(cfg=cfg, db=db))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/history")
+
+        assert r.status_code == 200
+        assert "Scan History" in r.text
+        assert scan_id in r.text
+
     async def test_dashboard_shows_configuration_needed_banner_for_degraded_runtime(self):
         app = create_app(AppRuntime(config_error="bad config"))
 

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel hero-panel">
+  <h1>Scan History</h1>
+  <p class="lead">Track completed and incomplete scans, including resumable runs.</p>
+</section>
+
+<section class="panel">
+  {% if scans %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Scan ID</th>
+          <th>Started</th>
+          <th>Finished</th>
+          <th>Total</th>
+          <th>Corrupt</th>
+          <th>Unreadable</th>
+          <th>Scope</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for scan in scans %}
+        <tr>
+          <td>{{ scan.id }}</td>
+          <td>{{ scan.started_at }}</td>
+          <td>{{ scan.finished_at or "incomplete" }}</td>
+          <td>{{ scan.total }}</td>
+          <td>{{ scan.corrupt }}</td>
+          <td>{{ scan.unreadable }}</td>
+          <td>{{ scan.scope or "all configured paths" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No scans recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

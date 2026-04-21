@@ -208,6 +208,28 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             {"title": "SemanticDog Setup", "setup": collect_setup_diagnostics(runtime)},
         )
 
+    @target_app.get("/issues")
+    async def issues_page(request: Request):
+        runtime = _get_runtime(request)
+        db = runtime.db
+        issues = [] if db is None else db.list_issue_files(statuses=["corrupt", "unreadable"], limit=50)
+        return templates.TemplateResponse(
+            request,
+            "issues.html",
+            {"title": "SemanticDog Issues", "issues": issues},
+        )
+
+    @target_app.get("/history")
+    async def history_page(request: Request):
+        runtime = _get_runtime(request)
+        db = runtime.db
+        scans = [] if db is None else db.list_scans(limit=20)
+        return templates.TemplateResponse(
+            request,
+            "history.html",
+            {"title": "SemanticDog History", "scans": scans},
+        )
+
     # -----------------------------------------------------------------------
     # /metrics  (Prometheus text format)
     # -----------------------------------------------------------------------
@@ -313,6 +335,30 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             "current": None if current is None else current.__dict__,
             "last": None if last is None else last.__dict__,
             "last_error": manager.last_error() if manager is not None else None,
+        }
+
+    @target_app.get("/api/issues")
+    async def api_issues(
+        request: Request,
+        status: str | None = None,
+        ext: str | None = None,
+        path_prefix: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        db = runtime.db
+        if db is None:
+            return {"issues": []}
+        statuses = [status] if status else ["corrupt", "unreadable"]
+        return {
+            "issues": db.list_issue_files(
+                statuses=statuses,
+                ext=ext,
+                path_prefix=path_prefix,
+                limit=limit,
+                offset=offset,
+            )
         }
 
     @target_app.get("/api/scans")

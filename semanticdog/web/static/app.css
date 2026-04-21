@@ -108,6 +108,28 @@ a {
   color: #cbd5e1;
 }
 
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.8rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  vertical-align: top;
+}
+
+.data-table th {
+  color: #bae6fd;
+  font-size: 0.92rem;
+}
+
 @media (max-width: 700px) {
   .shell-header {
     flex-direction: column;

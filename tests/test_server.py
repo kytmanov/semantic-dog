@@ -224,6 +224,23 @@ class TestApiEndpoints:
             r = await c.get("/api/scans/missing")
         assert r.status_code == 404
 
+    async def test_api_issues_returns_corrupt_and_unreadable(self, configured_app, db):
+        db.record("/good.jpg", 1.0, 100, "ok")
+        db.record("/bad.jpg", 1.0, 100, "corrupt")
+        db.record("/blocked.jpg", 1.0, 100, "unreadable")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/issues")
+        assert r.status_code == 200
+        assert {issue["path"] for issue in r.json()["issues"]} == {"/bad.jpg", "/blocked.jpg"}
+
+    async def test_api_issues_filters_by_status(self, configured_app, db):
+        db.record("/bad.jpg", 1.0, 100, "corrupt")
+        db.record("/blocked.jpg", 1.0, 100, "unreadable")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/issues", params={"status": "corrupt"})
+        assert r.status_code == 200
+        assert [issue["path"] for issue in r.json()["issues"]] == ["/bad.jpg"]
+
 
 # ---------------------------------------------------------------------------
 # /trigger
