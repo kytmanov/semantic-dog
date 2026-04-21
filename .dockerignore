@@ -1,0 +1,10 @@
+.git
+.github
+.pytest_cache
+.venv
+__pycache__/
+*.pyc
+.DS_Store
+config.yaml
+tests/
+CHANGELOG.md

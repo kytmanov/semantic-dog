@@ -4,7 +4,9 @@ Your NAS keeps your files safe from hardware failure. SemanticDog checks they're
 
 ZFS and RAID verify that bits on disk match what was written. That's not the same as verifying a JPEG can be decoded, a RAW file parsed, or a PDF opened. Bit-rot, partial writes, and failed copies can produce files that pass every checksum but are silently broken at the application layer — you won't find out until you need them.
 
-SemanticDog scans your library on a schedule, tells you which files are corrupt, and alerts you before you need them.
+SemanticDog lets you run scans on demand or from an external scheduler, tells you which files are corrupt, and alerts you before you need them.
+
+It also ships with a built-in Web UI for Docker/NAS deployments: setup, dashboard, issues, history, and configuration pages all run from the same Python service.
 
 **Works with AI agents.** SemanticDog exposes an [MCP](https://modelcontextprotocol.io) server — Claude and other agents can query scan results, trigger scans, and reason about your library health directly.
 
@@ -27,6 +29,44 @@ sdog check-deps
 ```
 
 The only hard requirement is Python 3.12+. Install `ffmpeg` for video, `pillow-heif` for HEIC — everything else is bundled.
+
+---
+
+## Docker / NAS
+
+Build the image:
+
+```bash
+docker build -t semanticdog .
+```
+
+Run it with persistent config/state/log mounts and your media library mounted read-only:
+
+```bash
+docker run -d \
+  --name semanticdog \
+  -p 9090:9090 \
+  -e SDOG_PATHS=/library/photos:/library/documents \
+  -e SDOG_DB_PATH=/data/state/state.db \
+  -e SDOG_HTTP_BASIC_ENABLED=true \
+  -e SDOG_HTTP_BASIC_USERNAME=admin \
+  -e SDOG_HTTP_BASIC_PASSWORD=change-me \
+  -v "$PWD/data/config:/data/config" \
+  -v "$PWD/data/state:/data/state" \
+  -v "$PWD/data/logs:/data/logs" \
+  -v /mnt/photos:/library/photos:ro \
+  -v /mnt/documents:/library/documents:ro \
+  semanticdog
+```
+
+Open `http://<nas-host>:9090/` and go through the setup flow.
+
+Important NAS notes:
+
+- Scan roots must exist inside the container, not just on the host.
+- Keep media mounts read-only when possible.
+- If your NAS bind mounts require a specific UID/GID, set `user:` in `compose.example.yaml` or override the container user in your deployment.
+- Config lives at `/data/config/config.yaml`, state at `/data/state/state.db`, and logs under `/data/logs`.
 
 ---
 
@@ -90,6 +130,8 @@ Audio: MP3 · FLAC · WAV · AAC
 ---
 
 ## Scheduled scanning
+
+SemanticDog does not run an internal scheduler yet. For NAS and Docker deployments, use your NAS task scheduler, cron, or a sidecar like `supercronic` to call `sdog scan`.
 
 ```bash
 0 2 * * * sdog scan --config /data/config/config.yaml >> /data/logs/sdog.log 2>&1
@@ -161,6 +203,8 @@ Config is loaded automatically from the first location found:
 
 Override with `--config /path/to/config.yaml` on any command.
 
+If you run the Web UI, the same config can also be edited from `/setup` and `/config`. Environment variables still win over YAML and show up as locked/env-overridden values in the UI.
+
 ```yaml
 paths:
   - /mnt/photos
@@ -185,8 +229,21 @@ sdog serve --port 9090
 ```
 
 - `GET /metrics` — Prometheus scrape endpoint
-- `POST /trigger` — kick off a scan remotely (also accepts `{"scope": "/mnt/photos/2024"}`)
+- `POST /trigger` — start a background scan remotely (also accepts `{"scope": "/mnt/photos/2024"}`)
 - `GET /status` — current state and file counts as JSON
+- `GET /api/scan/current` — active scan snapshot, last snapshot, notification errors
+- `GET /api/issues` — current corrupt/unreadable files
+- `GET /api/scans` — scan history
+- `GET /api/config` — effective config plus source metadata
+
+The built-in Web UI uses the same service:
+
+- `/` — setup or dashboard landing page
+- `/dashboard` — health-first dashboard
+- `/setup` — environment diagnostics and first-run settings
+- `/config` — structured config editor
+- `/issues` — corrupt and unreadable file list
+- `/history` — scan history
 
 ---
 
@@ -261,11 +318,20 @@ tests/
 GET  /health      → 200 {"status":"ok"}
 GET  /status      → 200 {status, files_indexed, by_status, last_scan}
 GET  /metrics     → 200 Prometheus text
-POST /trigger     → 200 {status:"complete", scan_id}
-                    400 scope outside configured roots
-                    409 scan already running
-                    429 cooldown {retry_after_s}
-                    503 not configured
+GET  /api/app     → 200 {ready, config_path, config_error, db_error, current_scan}
+GET  /api/setup   → 200 {config, db, scan_roots, dependencies, warnings}
+GET  /api/config  → 200 {path, raw, effective, sources}
+POST /api/config/validate → 200 {valid, effective?}
+PUT  /api/config  → 200 {status:"saved", restart_required, ...}
+GET  /api/scan/current → 200 {current, last, last_error, notification_errors}
+GET  /api/issues  → 200 {issues:[...]}
+GET  /api/scans   → 200 {scans:[...]}
+POST /api/notify/test → 200 {status:"sent"|"partial", errors:[...]}
+POST /trigger     → 200 {status:"started", scan_id}
+                     400 scope outside configured roots
+                     409 scan already running
+                     429 cooldown {retry_after_s}
+                     503 not configured
 GET  /mcp/sse     → SSE stream (requires mcp_enabled=true + mcp_auth_token)
 ```
 
