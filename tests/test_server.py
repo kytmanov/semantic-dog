@@ -171,6 +171,46 @@ class TestApiEndpoints:
         assert r.status_code == 200
         assert r.json()["ready"] is True
 
+    async def test_api_config_returns_sources_and_effective_values(self, configured_app, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("paths:\n  - /library\nworkers: 3\n")
+        app.state.runtime.config_store = __import__("semanticdog.config_store", fromlist=["ConfigStore"]).ConfigStore(str(config_path))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/config")
+
+        assert r.status_code == 200
+        assert r.json()["raw"]["workers"] == 3
+        assert r.json()["sources"]["workers"] == "yaml"
+
+    async def test_api_config_validate_rejects_hidden_field(self, configured_app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/api/config/validate", json={"schedule": "* * * * *"})
+
+        assert r.status_code == 200
+        assert r.json()["valid"] is False
+
+    async def test_api_config_save_persists_editable_fields(self, configured_app, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("paths:\n  - /library\nfuture_key: 42\n")
+        app.state.runtime.config_store = __import__("semanticdog.config_store", fromlist=["ConfigStore"]).ConfigStore(str(config_path))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.put("/api/config", json={"workers": 7})
+
+        assert r.status_code == 200
+        assert r.json()["status"] == "saved"
+        assert "future_key: 42" in config_path.read_text()
+
+    async def test_api_config_save_blocked_while_scan_running(self, configured_app):
+        runtime = app.state.runtime
+        runtime.scan_manager._active_future = MagicMock(done=MagicMock(return_value=False))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.put("/api/config", json={"workers": 7})
+
+        assert r.status_code == 409
+
     async def test_api_setup_returns_diagnostics(self, configured_app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.get("/api/setup")

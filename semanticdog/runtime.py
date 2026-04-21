@@ -9,6 +9,7 @@ from .config import Config, load_config
 
 if TYPE_CHECKING:
     from .db import Database
+    from .config_store import ConfigStore
     from .services.scan_manager import ScanManager
 
 
@@ -21,6 +22,7 @@ class AppRuntime:
     db: "Database | None" = None
     config_error: str | None = None
     db_error: str | None = None
+    config_store: "ConfigStore | None" = None
     scan_manager: "ScanManager | None" = None
 
     @property
@@ -40,7 +42,9 @@ def load_runtime(config_path: str | None = None) -> AppRuntime:
     degraded state and guide the user through fixing config or storage issues.
     """
 
-    runtime = AppRuntime(config_path=config_path)
+    from .config_store import ConfigStore
+
+    runtime = AppRuntime(config_path=config_path, config_store=ConfigStore(config_path))
 
     try:
         cfg = load_config(config_path)

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .config import RESTART_REQUIRED_CONFIG_FIELDS
 from .runtime import AppRuntime
 from .services.diagnostics import collect_setup_diagnostics
 
@@ -320,6 +321,57 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             "current_scan": None if current is None else current.__dict__,
         }
 
+    @target_app.get("/api/config")
+    async def api_config(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        store = runtime.config_store
+        if store is None:
+            return {"path": runtime.config_path, "raw": {}, "effective": {}, "sources": {}}
+        return store.get_view()
+
+    @target_app.post("/api/config/validate")
+    async def api_config_validate(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        store = runtime.config_store
+        if store is None:
+            return {"valid": False, "error": "config store unavailable"}
+        payload = await request.json()
+        try:
+            cfg = store.validate_update(payload)
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+        return {
+            "valid": True,
+            "effective": {field: getattr(cfg, field) for field in cfg.__dataclass_fields__},
+        }
+
+    @target_app.put("/api/config")
+    async def api_config_save(request: Request) -> JSONResponse:
+        runtime = _get_runtime(request)
+        store = runtime.config_store
+        manager = runtime.scan_manager
+        if manager is not None and manager.is_running():
+            return JSONResponse(status_code=409, content={"error": "cannot save config while scan is running"})
+        if store is None:
+            return JSONResponse(status_code=500, content={"error": "config store unavailable"})
+
+        payload = await request.json()
+        try:
+            saved = store.save(payload)
+            runtime.config_path = saved["path"]
+            runtime.config_store = store
+            runtime.cfg = store.load_effective()
+            runtime.config_error = None
+            restart_fields = set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
+            if not restart_fields and runtime.db is not None:
+                from .services.scan_manager import ScanManager
+
+                runtime.scan_manager = ScanManager(runtime.cfg, runtime.db)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
+        return JSONResponse({"status": "saved", "restart_required": sorted(restart_fields), **saved})
+
     @target_app.get("/api/setup")
     async def api_setup(request: Request) -> dict[str, Any]:
         runtime = _get_runtime(request)
@@ -459,9 +511,15 @@ def build_app(cfg: "Config", db: "Database") -> FastAPI:
     _cfg = cfg
     _db = db
 
+    from .config_store import ConfigStore
     from .services.scan_manager import ScanManager
 
-    runtime = AppRuntime(cfg=cfg, db=db, scan_manager=ScanManager(cfg, db))
+    runtime = AppRuntime(
+        cfg=cfg,
+        db=db,
+        config_store=ConfigStore(),
+        scan_manager=ScanManager(cfg, db),
+    )
     app.state.runtime = runtime
     _mount_mcp(app, runtime)
     return app
