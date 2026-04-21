@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="panel">
+<section class="panel hero-panel">
   <h1>Dashboard</h1>
   <p class="lead">Monitor library health, scan progress, and recent issues from one place.</p>
+  <div class="status-banner">
+    <span class="badge" id="banner-state">{{ banner.state }}</span>
+    <p id="banner-detail">{{ banner.detail }}</p>
+  </div>
 </section>
 
 <section class="grid">
@@ -14,19 +18,54 @@
   </article>
 
   <article class="panel stat-card">
+    <h2>Library Health</h2>
+    <p><strong>OK:</strong> <span id="count-ok">{{ status.by_status.get("ok", 0) }}</span></p>
+    <p><strong>Corrupt:</strong> <span id="count-corrupt">{{ status.by_status.get("corrupt", 0) }}</span></p>
+    <p><strong>Unreadable:</strong> <span id="count-unreadable">{{ status.by_status.get("unreadable", 0) }}</span></p>
+  </article>
+
+  <article class="panel stat-card">
+    <h2>Active Scan</h2>
+    {% if current_scan %}
+    <p><strong>Scan ID:</strong> <span id="current-scan">{{ current_scan.scan_id }}</span></p>
+    <p><strong>Processed:</strong> <span id="scan-processed">{{ current_scan.processed }}</span> / <span id="scan-total">{{ current_scan.discovered_total }}</span></p>
+    <p><strong>Rate:</strong> <span id="scan-rate">{{ "%.1f"|format(current_scan.files_per_sec) }}</span> files/sec</p>
+    {% else %}
+    <p><strong>Scan ID:</strong> <span id="current-scan">none</span></p>
+    <p><strong>Processed:</strong> <span id="scan-processed">0</span> / <span id="scan-total">0</span></p>
+    <p><strong>Rate:</strong> <span id="scan-rate">0.0</span> files/sec</p>
+    {% endif %}
+  </article>
+
+</section>
+
+<section class="grid two-up">
+  <article class="panel">
     <h2>Last Scan</h2>
     {% if status.last_scan %}
     <p><strong>Scan ID:</strong> {{ status.last_scan.id }}</p>
+    <p><strong>Scope:</strong> {{ status.last_scan.scope or "all configured paths" }}</p>
     <p><strong>Total:</strong> {{ status.last_scan.total }}</p>
+    <p><strong>Corrupt:</strong> {{ status.last_scan.corrupt }}</p>
+    <p><strong>Unreadable:</strong> {{ status.last_scan.unreadable }}</p>
+    <p><strong>Finished:</strong> {{ status.last_scan.finished_at or "incomplete" }}</p>
     {% else %}
     <p>No scans recorded yet.</p>
     {% endif %}
   </article>
 
-  <article class="panel stat-card">
-    <h2>API</h2>
-    <p><strong>Current scan:</strong> <span id="current-scan">{% if current_scan %}{{ current_scan.scan_id }}{% else %}none{% endif %}</span></p>
+  <article class="panel">
+    <h2>Action Needed</h2>
     <p><strong>Setup warnings:</strong> <span id="setup-warning-count">{{ setup.warnings | length }}</span></p>
+    {% if setup.warnings %}
+    <ul class="simple-list warning-list" id="setup-warning-list">
+      {% for warning in setup.warnings[:5] %}
+      <li>{{ warning }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p id="setup-warning-list">No setup warnings detected.</p>
+    {% endif %}
   </article>
 </section>
 {% endblock %}

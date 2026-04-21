@@ -30,6 +30,8 @@ class TestWebUi:
         assert r.status_code == 200
         assert "Dashboard" in r.text
         assert "SemanticDog" in r.text
+        assert "Library Health" in r.text
+        assert "Action Needed" in r.text
 
     async def test_setup_page_renders(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
@@ -40,6 +42,29 @@ class TestWebUi:
 
         assert r.status_code == 200
         assert "Scan Roots" in r.text
+
+    async def test_dashboard_shows_configuration_needed_banner_for_degraded_runtime(self):
+        app = create_app(AppRuntime(config_error="bad config"))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert "Configuration needed" in r.text
+
+    async def test_dashboard_shows_healthy_banner_after_scan(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        db = Database(cfg.db_path)
+        scan_id = db.create_scan(scope=str(tmp_path))
+        db.record(str(tmp_path / "img.jpg"), 1.0, 100, "ok", scan_id=scan_id)
+        db.finish_scan(scan_id, total=1, corrupt=0, unreadable=0, files_per_sec=1.0)
+        app = create_app(AppRuntime(cfg=cfg, db=db))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert "Healthy" in r.text
 
     async def test_static_assets_are_served(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))

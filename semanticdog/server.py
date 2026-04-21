@@ -97,6 +97,39 @@ def _is_authorized(request: Request, runtime: AppRuntime) -> bool:
     )
 
 
+def _dashboard_banner(status_payload: dict[str, Any], setup: dict[str, Any], runtime: AppRuntime) -> dict[str, str]:
+    if runtime.config_error or runtime.db_error:
+        return {
+            "state": "Configuration needed",
+            "detail": "The server started in degraded mode. Review setup warnings before scanning.",
+        }
+    if any("not readable" in warning or "missing" in warning for warning in setup.get("warnings", [])):
+        return {
+            "state": "Access problem suspected",
+            "detail": "One or more scan roots are missing or unreadable inside the current runtime.",
+        }
+    if status_payload.get("status") == "scanning":
+        return {
+            "state": "Scan running",
+            "detail": "SemanticDog is validating files in the background. You can refresh safely.",
+        }
+    by_status = status_payload.get("by_status", {})
+    if by_status.get("corrupt", 0) or by_status.get("unreadable", 0):
+        return {
+            "state": "Issues found",
+            "detail": "Corrupt or unreadable files need attention. Check the latest scan details below.",
+        }
+    if status_payload.get("files_indexed", 0) > 0:
+        return {
+            "state": "Healthy",
+            "detail": "No current corruption or access issues are recorded in the indexed library.",
+        }
+    return {
+        "state": "Configuration needed",
+        "detail": "Finish setup and run the first scan to establish a baseline.",
+    }
+
+
 def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     target_app = FastAPI(title="SemanticDog", version="0.1.0")
     target_app.state.runtime = runtime or AppRuntime()
@@ -144,6 +177,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 "title": "SemanticDog Dashboard",
                 "status": status_payload,
                 "setup": setup,
+                "banner": _dashboard_banner(status_payload, setup, runtime),
                 "current_scan": status_payload.get("current_scan"),
             },
         )
@@ -160,6 +194,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 "title": "SemanticDog Dashboard",
                 "status": status_payload,
                 "setup": setup,
+                "banner": _dashboard_banner(status_payload, setup, runtime),
                 "current_scan": status_payload.get("current_scan"),
             },
         )

@@ -57,6 +57,36 @@ a {
   box-shadow: 0 24px 60px rgba(2, 6, 23, 0.25);
 }
 
+.hero-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.status-banner {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.16);
+  border: 1px solid rgba(45, 212, 191, 0.22);
+}
+
+.badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(125, 211, 252, 0.14);
+  color: #bae6fd;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.warning-list {
+  color: #fcd34d;
+}
+
 .lead {
   color: #cbd5e1;
 }
