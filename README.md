@@ -15,6 +15,10 @@ It ships as a single service with:
 
 **Works with AI agents.** SemanticDog exposes an [MCP](https://modelcontextprotocol.io) server so Claude and other agents can inspect scan results, trigger scans, and reason about library health.
 
+<p center>
+<img width="1492" height="704" alt="Screenshot 2026-04-21 at 7 09 45 PM" src="https://github.com/user-attachments/assets/f87027f9-1eb0-4ee3-bc52-ca3d04bcd0d2" />
+</p>
+
 ---
 
 ## Quick Start
