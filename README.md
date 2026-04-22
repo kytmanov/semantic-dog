@@ -41,7 +41,7 @@ SemanticDog publishes Linux images for `linux/amd64` and `linux/arm64`.
 For NAS installs, pin an exact release tag instead of floating on `latest`.
 
 ```bash
-docker pull ghcr.io/kytmanov/semantic-dog:0.3.1
+docker pull ghcr.io/kytmanov/semantic-dog:0.3.2
 ```
 
 ### Docker Compose (Host Paths)
@@ -49,7 +49,7 @@ docker pull ghcr.io/kytmanov/semantic-dog:0.3.1
 ```yaml
 services:
   semanticdog:
-    image: ghcr.io/kytmanov/semantic-dog:0.3.1
+    image: ghcr.io/kytmanov/semantic-dog:0.3.2
     container_name: semanticdog
     restart: unless-stopped
     # Replace 1000 with your NAS user's UID
@@ -89,7 +89,7 @@ Named volumes version (easier, no permission management):
 ```yaml
 services:
   semanticdog:
-    image: ghcr.io/kytmanov/semantic-dog:0.3.1
+    image: ghcr.io/kytmanov/semantic-dog:0.3.2
     container_name: semanticdog
     restart: unless-stopped
     ports:
@@ -118,7 +118,7 @@ docker run -d \
   -v semanticdog-logs:/data/logs \
   -v /mnt/photos:/library/photos:ro \
   -v /mnt/documents:/library/documents:ro \
-  ghcr.io/kytmanov/semantic-dog:0.3.1
+  ghcr.io/kytmanov/semantic-dog:0.3.2
 ```
 
 ### Web UI Flow
@@ -149,7 +149,7 @@ If you want built-in HTTP basic auth in Docker without putting the password dire
 ```yaml
 services:
   semanticdog:
-    image: ghcr.io/kytmanov/semantic-dog:0.3.1
+    image: ghcr.io/kytmanov/semantic-dog:0.3.2
     environment:
       TZ: Europe/Berlin
       SDOG_HTTP_BASIC_ENABLED: "true"

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.2] — 2026-04-22
+
+### New features
+
+**Redesigned dashboard health overview**  
+The dashboard now uses a stronger visual hierarchy with a stateful hero banner, activity timeline, and health overview card. File distribution is shown as a health-aware donut chart so healthy, corrupt, and unreadable files are easier to distinguish at a glance.
+
+### Changes
+
+- Setup changes now refresh scan-root diagnostics immediately after saving, without requiring a page reload.
+- Scheduled run reporting now reflects the completed run outcome instead of a stale trigger state, and history/dashboard totals stay aligned with files actually examined.
+- Dashboard refresh logic now ignores stale `/status` responses after a scan completes, preventing older responses from overwriting newer state.
+- The setup/dashboard frontend rendering paths were hardened to avoid DOM injection when displaying server-supplied values.
+- Docker image builds now create the sudoers include directory before writing the hardening rule, fixing CI and release image builds.
+- README examples now point to the `0.3.2` image tag.
+
 ## [0.3.1] — 2026-04-22
 
 ### New features
