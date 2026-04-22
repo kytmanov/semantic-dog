@@ -171,6 +171,17 @@ class TestEnvOverrides:
         with pytest.raises(ConfigError, match="unreadable file"):
             load_config()
 
+    def test_missing_file_env_is_ignored_when_direct_env_present(self, monkeypatch):
+        monkeypatch.setenv("SDOG_PATHS", "/x")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_ENABLED", "true")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_USERNAME", "admin")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD", "from-env")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD_FILE", "/no/such/file")
+
+        cfg = load_config()
+
+        assert cfg.http_basic_password == "from-env"
+
 
 class TestValidation:
     def test_no_paths_raises(self):

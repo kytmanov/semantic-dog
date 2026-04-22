@@ -71,13 +71,13 @@ jobs:
 
       - name: Start container
         run: |
-          mkdir -p "$RUNNER_TEMP/semanticdog/config" "$RUNNER_TEMP/semanticdog/state" "$RUNNER_TEMP/semanticdog/logs" "$RUNNER_TEMP/semanticdog/library"
+          mkdir -p "$RUNNER_TEMP/semanticdog/library"
           docker run -d --name semanticdog-ci \
             -p 8181:8181 \
             -e TZ=UTC \
-            -v "$RUNNER_TEMP/semanticdog/config:/data/config" \
-            -v "$RUNNER_TEMP/semanticdog/state:/data/state" \
-            -v "$RUNNER_TEMP/semanticdog/logs:/data/logs" \
+            -v semanticdog-config-ci:/data/config \
+            -v semanticdog-state-ci:/data/state \
+            -v semanticdog-logs-ci:/data/logs \
             -v "$RUNNER_TEMP/semanticdog/library:/library:ro" \
             semanticdog:ci
 
@@ -117,8 +117,8 @@ jobs:
 
       - name: Verify config persisted
         run: |
-          test -f "$RUNNER_TEMP/semanticdog/config/config.yaml"
-          grep -q '/library' "$RUNNER_TEMP/semanticdog/config/config.yaml"
+          docker exec semanticdog-ci test -f /data/config/config.yaml
+          docker exec semanticdog-ci grep -q '/library' /data/config/config.yaml
 
       - name: Restart and verify persistence
         run: |
@@ -138,7 +138,7 @@ jobs:
 
       - name: Clean up container
         if: always()
-        run: docker rm -f semanticdog-ci || true
+        run: docker rm -f semanticdog-ci || true && docker volume rm -f semanticdog-config-ci semanticdog-state-ci semanticdog-logs-ci || true
 
   docker-multiarch:
     name: Docker multi-arch build

@@ -112,7 +112,7 @@ jobs:
           provenance: true
           sbom: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ github.ref_name != '' && startsWith(github.ref_name, 'v') && github.ref_name[1:] || github.ref_name }}
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ github.event.repository.updated_at }}
 

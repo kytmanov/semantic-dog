@@ -240,8 +240,9 @@ def _parse_list(val: Any) -> list[str]:
 def _apply_env(data: dict[str, Any]) -> None:
     """Override dict values with SDOG_* environment variables."""
     for field in _FILE_ENV_FIELDS:
+        env_key = f"{_PREFIX}{field.upper()}"
         file_key = f"{_PREFIX}{field.upper()}_FILE"
-        if file_key not in os.environ:
+        if env_key in os.environ or file_key not in os.environ:
             continue
         file_path = Path(os.environ[file_key]).expanduser()
         try:
