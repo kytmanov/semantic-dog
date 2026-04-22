@@ -174,6 +174,13 @@ function setDotClass(dot, cls) {
   dot.className = 'status-dot ' + cls;
 }
 
+function setHeroClass(state) {
+  const hero = document.getElementById('dashboard-hero');
+  if (!hero) return;
+  hero.classList.remove('is-healthy', 'is-warning', 'is-running', 'is-ready', 'is-degraded');
+  hero.classList.add(state);
+}
+
 function dashboardBanner(status) {
   const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
   if (status.status === 'scanning') {
@@ -204,6 +211,149 @@ function dashboardBanner(status) {
     state: 'Ready to scan',
     detail: 'SemanticDog is configured. Run the first scan to establish a baseline.',
   };
+}
+
+function dashboardHeroCopy(status) {
+  const banner = dashboardBanner(status);
+  const lastScan = status.last_scan;
+  const corrupt = status.by_status?.corrupt ?? 0;
+  const unreadable = status.by_status?.unreadable ?? 0;
+
+  if (banner.state === 'Healthy') {
+    return {
+      heroClass: 'is-healthy',
+      title: 'All clear. Your library is healthy.',
+      detail: lastScan?.scope
+        ? `Last scan completed without issues for ${lastScan.scope}.`
+        : 'No current corruption or access issues are recorded in the indexed library.',
+    };
+  }
+
+  if (banner.state === 'Issues found') {
+    return {
+      heroClass: 'is-warning',
+      title: 'Library Health Warning: Data Compromised.',
+      detail: `${corrupt} files are corrupted. ${unreadable} files are unreadable. View details below.`,
+    };
+  }
+
+  if (banner.state === 'Scan running') {
+    return {
+      heroClass: 'is-running',
+      title: 'Scan in progress. SemanticDog is checking your library.',
+      detail: 'Live progress appears below while files are being validated.',
+    };
+  }
+
+  if (banner.state === 'Configuration needed') {
+    return {
+      heroClass: 'is-degraded',
+      title: 'Configuration attention needed before trusting results.',
+      detail: banner.detail,
+    };
+  }
+
+  if (banner.state === 'Access problem suspected') {
+    return {
+      heroClass: 'is-degraded',
+      title: 'Library access warning. Scan roots may be unavailable.',
+      detail: banner.detail,
+    };
+  }
+
+  return {
+    heroClass: 'is-ready',
+    title: 'SemanticDog is ready to scan your library.',
+    detail: banner.detail,
+  };
+}
+
+function updateHero(status) {
+  const dot = document.getElementById('status-dot');
+  const stateEl = document.getElementById('banner-state');
+  const titleEl = document.getElementById('dashboard-hero-title');
+  const detailEl = document.getElementById('banner-detail');
+  const filesEl = document.getElementById('files-indexed');
+  const runtimeEl = document.getElementById('runtime-status');
+  const copy = dashboardHeroCopy(status);
+  const banner = dashboardBanner(status);
+  const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
+
+  if (runtimeEl) runtimeEl.textContent = status.status;
+  if (filesEl) filesEl.textContent = (status.files_indexed ?? 0).toLocaleString();
+  if (stateEl) stateEl.textContent = banner.state;
+  if (titleEl) titleEl.textContent = copy.title;
+  if (detailEl) detailEl.textContent = copy.detail;
+  setHeroClass(copy.heroClass);
+
+  if (status.status === 'scanning') setDotClass(dot, 'dot-blue');
+  else if (hasBad) setDotClass(dot, 'dot-red');
+  else if (status.status === 'idle' && (status.files_indexed ?? 0) > 0) setDotClass(dot, 'dot-green');
+  else if (status.status === 'degraded' || status.status === 'error') setDotClass(dot, 'dot-amber');
+  else setDotClass(dot, 'dot-gray');
+}
+
+function updateTimeline(status) {
+  const last = status.last_scan;
+  const corrupt = status.by_status?.corrupt ?? 0;
+  const unreadable = status.by_status?.unreadable ?? 0;
+  const issueCount = corrupt + unreadable;
+
+  const lastDot = document.getElementById('timeline-last-dot');
+  const lastTitle = document.getElementById('timeline-last-title');
+  const lastMeta = document.getElementById('timeline-last-meta');
+  const lastSubmeta = document.getElementById('timeline-last-submeta');
+  const lastScope = document.getElementById('timeline-last-scope');
+  const lastFiles = document.getElementById('last-scan-files-checked');
+
+  if (lastDot) {
+    lastDot.classList.remove('is-success', 'is-danger', 'is-info', 'is-muted');
+    if (!last) lastDot.classList.add('is-muted');
+    else if (issueCount > 0) lastDot.classList.add('is-danger');
+    else lastDot.classList.add('is-success');
+  }
+
+  if (lastTitle) {
+    if (!last) {
+      lastTitle.textContent = '1. No scans yet';
+    } else if (last.finished_at && issueCount > 0) {
+      lastTitle.textContent = '1. Last scan completed with issues';
+    } else if (last.finished_at) {
+      lastTitle.innerHTML = `1. Last Scan: <strong id="timeline-last-when" data-time="${last.started_at || ''}">${last.started_at || ''}</strong>`;
+    } else {
+      lastTitle.textContent = '1. Last scan incomplete';
+    }
+  }
+
+  if (lastMeta) {
+    if (!last) {
+      lastMeta.textContent = 'Run your first scan to establish a baseline.';
+    } else if (last.finished_at) {
+      lastMeta.innerHTML = `Duration: <span id="timeline-last-duration" data-dur-start="${last.started_at || ''}" data-dur-end="${last.finished_at || ''}">${last.finished_at || ''}</span>. Scan Speed: <span id="timeline-last-rate">${last.files_per_sec ? `${Number(last.files_per_sec).toFixed(1)} f/s` : '—'}</span>`;
+    } else {
+      lastMeta.textContent = 'Scan started but did not finish cleanly.';
+    }
+  }
+
+  if (lastSubmeta) lastSubmeta.style.display = last ? '' : 'none';
+  if (lastScope) lastScope.textContent = last?.scope || 'all configured paths';
+  if (lastFiles) lastFiles.textContent = Number(last?.total || 0).toLocaleString();
+
+  updateSchedulerCard(status.scheduler);
+}
+
+function updateIssuePills(status) {
+  const corrupt = status.by_status?.corrupt ?? 0;
+  const unreadable = status.by_status?.unreadable ?? 0;
+  const corruptPill = document.getElementById('overview-corrupt-pill');
+  const unreadablePill = document.getElementById('overview-unreadable-pill');
+  const corruptCount = document.getElementById('count-corrupt');
+  const unreadableCount = document.getElementById('count-unreadable');
+
+  if (corruptCount) corruptCount.textContent = Number(corrupt).toLocaleString();
+  if (unreadableCount) unreadableCount.textContent = Number(unreadable).toLocaleString();
+  if (corruptPill) corruptPill.classList.toggle('is-active', corrupt > 0);
+  if (unreadablePill) unreadablePill.classList.toggle('is-active', unreadable > 0);
 }
 
 function updateScanSection(current, last) {
@@ -288,9 +438,17 @@ function updateSchedulerCard(scheduler) {
   const schedulerLastResult = document.getElementById('scheduler-last-result');
   const schedulerCron = document.getElementById('scheduler-cron');
   const schedulerError = document.getElementById('scheduler-error');
+  const nextDot = document.getElementById('timeline-next-dot');
 
   const enabled = Boolean(scheduler?.enabled);
   const hasError = Boolean(scheduler?.last_error);
+
+  if (nextDot) {
+    nextDot.classList.remove('is-success', 'is-danger', 'is-info', 'is-muted');
+    if (hasError) nextDot.classList.add('is-danger');
+    else if (enabled) nextDot.classList.add('is-info');
+    else nextDot.classList.add('is-muted');
+  }
 
   if (nextScanInfo) {
     if (hasError) nextScanInfo.textContent = 'Schedule unavailable';
@@ -341,7 +499,12 @@ function updateSchedulerCard(scheduler) {
   }
 }
 
-const FILETYPE_COLORS = ['#4f8ef7', '#22d3a6', '#f8b84a', '#f06b6b', '#7c8ef5', '#66d9ef', '#94a3b8'];
+const OVERVIEW_COLORS = {
+  healthy: '#4f8ef7',
+  corrupt: '#f8b84a',
+  unreadable: '#f06b6b',
+  other: '#94a3b8',
+};
 
 function polarToCartesian(cx, cy, r, angleDeg) {
   const angle = ((angleDeg - 90) * Math.PI) / 180;
@@ -366,12 +529,13 @@ function describeArc(cx, cy, rOuter, rInner, startAngle, endAngle) {
   ].join(' ');
 }
 
-function renderFileTypeChart(data, filesIndexed = 0) {
-  const chart = document.getElementById('filetype-chart');
-  const layout = document.getElementById('filetype-layout');
-  const empty = document.getElementById('filetype-empty');
-  const legend = document.getElementById('filetype-legend');
-  const total = document.getElementById('filetype-chart-total');
+function renderOverviewChart(data, filesIndexed = 0) {
+  const chart = document.getElementById('overview-chart');
+  const layout = document.getElementById('overview-chart-layout');
+  const empty = document.getElementById('overview-empty');
+  const legend = document.getElementById('overview-legend');
+  const total = document.getElementById('overview-chart-total');
+  const totalText = document.getElementById('overview-total-files');
   const emptyTitle = empty?.querySelector('.empty-title');
   const emptyDesc = empty?.querySelector('.empty-desc');
   if (!chart || !layout || !empty || !legend || !total) return;
@@ -383,8 +547,9 @@ function renderFileTypeChart(data, filesIndexed = 0) {
     empty.style.display = '';
     legend.innerHTML = '';
     total.textContent = Number(filesIndexed || 0).toLocaleString();
+    if (totalText) totalText.textContent = Number(filesIndexed || 0).toLocaleString();
     if (emptyTitle) emptyTitle.textContent = 'No indexed files yet';
-    if (emptyDesc) emptyDesc.textContent = 'Run a scan to see which file types make up this library.';
+    if (emptyDesc) emptyDesc.textContent = 'Run a scan to see the health of this library and which file types dominate it.';
     return;
   }
 
@@ -394,17 +559,23 @@ function renderFileTypeChart(data, filesIndexed = 0) {
   layout.style.display = '';
   empty.style.display = 'none';
   total.textContent = totalFiles.toLocaleString();
-  legend.innerHTML = items.map((item, index) => `
-    <div class="filetype-legend-row">
+  if (totalText) totalText.textContent = totalFiles.toLocaleString();
+  legend.innerHTML = items.map((item) => {
+    const percent = totalFiles ? ((Number(item.count || 0) / totalFiles) * 100).toFixed(1) : '0.0';
+    const color = OVERVIEW_COLORS[item.tone] || OVERVIEW_COLORS.other;
+    const toneClass = `overview-tone-${item.tone || 'other'}`;
+    return `
+    <div class="filetype-legend-row overview-legend-row ${toneClass}">
       <div class="row" style="gap:0.625rem; min-width:0;">
-        <span class="filetype-swatch" style="background:${FILETYPE_COLORS[index % FILETYPE_COLORS.length]}"></span>
+        <span class="filetype-swatch overview-swatch ${toneClass}" style="background:${color}"></span>
         <span class="filetype-label">${item.label}</span>
       </div>
       <div class="filetype-meta">
         <span class="filetype-count">${Number(item.count || 0).toLocaleString()}</span>
-        <span class="filetype-percent">${item.percent}%</span>
+        <span class="filetype-percent">${percent}%</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   let startAngle = 0;
   for (let index = 0; index < items.length; index += 1) {
@@ -413,11 +584,12 @@ function renderFileTypeChart(data, filesIndexed = 0) {
     const endAngle = startAngle + angle;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', describeArc(120, 120, 108, 68, startAngle, endAngle));
-    path.setAttribute('fill', FILETYPE_COLORS[index % FILETYPE_COLORS.length]);
+    path.setAttribute('fill', OVERVIEW_COLORS[item.tone] || OVERVIEW_COLORS.other);
     path.setAttribute('stroke', '#08101f');
     path.setAttribute('stroke-width', '2');
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    title.textContent = `${item.label}: ${item.count} files (${item.percent}%)`;
+    const percent = totalFiles ? ((Number(item.count || 0) / totalFiles) * 100).toFixed(1) : '0.0';
+    title.textContent = `${item.label}: ${item.count} files (${percent}%)`;
     path.appendChild(title);
     chart.appendChild(path);
     startAngle = endAngle;
@@ -525,40 +697,12 @@ async function refreshDashboard() {
   if (refreshSeq !== _dashboardRefreshSeq) return;
 
   if (status) {
-    const rtEl  = document.getElementById('runtime-status');
-    const fiEl  = document.getElementById('files-indexed');
-    const okEl  = document.getElementById('count-ok');
-    const crEl  = document.getElementById('count-corrupt');
-    const urEl  = document.getElementById('count-unreadable');
-    const dot   = document.getElementById('status-dot');
-     const bannerState = document.getElementById('banner-state');
-     const bannerDetail = document.getElementById('banner-detail');
-
-    if (rtEl) rtEl.textContent = status.status;
-    if (fiEl) fiEl.textContent = (status.files_indexed ?? 0).toLocaleString();
-    if (okEl) okEl.textContent = (status.files_indexed ?? 0).toLocaleString();
-    if (crEl) crEl.textContent = (status.by_status?.corrupt ?? 0).toLocaleString();
-    if (urEl) urEl.textContent = (status.by_status?.unreadable ?? 0).toLocaleString();
-
-    const corruptCard    = document.getElementById('corrupt-card');
-    const unreadableCard = document.getElementById('unreadable-card');
-    if (corruptCard)    corruptCard.className    = (status.by_status?.corrupt    ?? 0) > 0 ? 'card card-danger' : 'card';
-    if (unreadableCard) unreadableCard.className = (status.by_status?.unreadable ?? 0) > 0 ? 'card card-warn'   : 'card';
-
-    const s = status.status;
-    const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
-    if      (s === 'scanning')                            setDotClass(dot, 'dot-blue');
-    else if (hasBad)                                      setDotClass(dot, 'dot-red');
-    else if (s === 'idle' && (status.files_indexed ?? 0) > 0) setDotClass(dot, 'dot-green');
-    else if (s === 'degraded' || s === 'error')           setDotClass(dot, 'dot-amber');
-    else                                                  setDotClass(dot, 'dot-gray');
-
-     const banner = dashboardBanner(status);
-     if (bannerState) bannerState.textContent = banner.state;
-     if (bannerDetail) bannerDetail.textContent = banner.detail;
-     renderFileTypeChart(status.file_types, status.files_indexed ?? 0);
-     updateSchedulerCard(status.scheduler);
-    }
+    updateHero(status);
+    updateTimeline(status);
+    updateIssuePills(status);
+    renderOverviewChart(status.overview_breakdown, status.files_indexed ?? 0);
+    refreshTimestamps();
+  }
 
   if (scanState) {
     updateScanSection(scanState.current, scanState.last);
@@ -711,15 +855,15 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(refreshTimestamps, 30000);
 
   initScheduleField();
-  const initialChart = document.getElementById('filetype-chart');
-  if (initialChart?.dataset.fileTypes) {
+  const initialChart = document.getElementById('overview-chart');
+  if (initialChart?.dataset.overviewBreakdown) {
     try {
-      renderFileTypeChart(
-        JSON.parse(initialChart.dataset.fileTypes),
-        Number(document.getElementById('filetype-chart-total')?.textContent || '0'),
+      renderOverviewChart(
+        JSON.parse(initialChart.dataset.overviewBreakdown),
+        Number(document.getElementById('overview-chart-total')?.textContent || '0'),
       );
     } catch {
-      renderFileTypeChart([], Number(document.getElementById('filetype-chart-total')?.textContent || '0'));
+      renderOverviewChart([], Number(document.getElementById('overview-chart-total')?.textContent || '0'));
     }
   }
   refreshDashboard();

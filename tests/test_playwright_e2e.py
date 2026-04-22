@@ -127,6 +127,7 @@ def test_user_can_add_second_root_then_run_scan_from_dashboard(tmp_path: Path):
             expect(page.locator("#next-scan-relative")).to_have_text(re.compile(r"^in .+"))
             expect(page.locator("#scheduler-badge")).to_have_text("Active")
             expect(page.locator("#scheduler-cron")).to_have_text("0 */6 * * *")
+            expect(page.locator("#overview-empty")).to_be_visible()
             run_scan = page.get_by_role("button", name="Run Scan")
             expect(run_scan).to_be_enabled()
             run_scan.click()
@@ -134,8 +135,12 @@ def test_user_can_add_second_root_then_run_scan_from_dashboard(tmp_path: Path):
             expect(page.locator("#files-indexed")).to_have_text("4", timeout=10000)
             expect(page.locator("#count-corrupt")).to_have_text("2", timeout=10000)
             expect(page.locator("#banner-state")).to_have_text("Issues found", timeout=10000)
-            expect(page.locator("#filetype-chart")).to_be_visible()
-            expect(page.locator(".filetype-label", has_text="JPG")).to_be_visible()
+            expect(page.locator("#dashboard-hero-title")).to_have_text("Library Health Warning: Data Compromised.", timeout=10000)
+            expect(page.locator("#overview-chart-layout")).to_be_visible()
+            expect(page.locator(".filetype-label", has_text="Healthy JPG")).to_be_visible()
+            expect(page.locator(".filetype-label", has_text="Corrupt JPG")).to_be_visible()
+            expect(page.locator("#overview-corrupt-pill")).to_contain_text("2")
+            expect(page.locator("#overview-unreadable-pill")).to_contain_text("0")
 
             page.get_by_role("link", name="Issues").click()
             expect(page.get_by_role("cell", name=f"bad-b.jpg {library_b}/")).to_be_visible()
@@ -233,6 +238,7 @@ def test_dashboard_ignores_stale_status_responses_after_scan(tmp_path: Path):
                             "by_status": {},
                             "last_scan": None,
                             "file_types": [],
+                            "overview_breakdown": [],
                             "current_scan": None,
                             "scheduler": {
                                 "enabled": True,
@@ -254,9 +260,9 @@ def test_dashboard_ignores_stale_status_responses_after_scan(tmp_path: Path):
 
             expect(page.locator("#files-indexed")).to_have_text("2", timeout=10000)
             expect(page.locator("#banner-state")).to_have_text("Issues found", timeout=10000)
-            expect(page.locator("#filetype-layout")).to_be_visible()
-            expect(page.locator("#filetype-empty")).not_to_be_visible()
-            expect(page.locator(".filetype-label", has_text="JPG")).to_be_visible()
+            expect(page.locator("#overview-chart-layout")).to_be_visible()
+            expect(page.locator("#overview-empty")).not_to_be_visible()
+            expect(page.locator(".filetype-label", has_text="Corrupt JPG")).to_be_visible()
 
             browser.close()
     finally:

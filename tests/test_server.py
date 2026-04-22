@@ -227,6 +227,52 @@ class TestStatusEndpoint:
         assert r.json()["file_types"][0]["count"] == 2
         assert r.json()["file_types"][1]["label"] == "MP4"
 
+    async def test_status_includes_overview_breakdown(self, configured_app, db):
+        db.record("/good-a.jpg", 1.0, 100, "ok")
+        db.record("/good-b.jpg", 1.0, 100, "ok")
+        db.record("/bad.jpg", 1.0, 100, "corrupt")
+        db.record("/locked.jpg", 1.0, 100, "unreadable")
+        db.record("/clip.mp4", 1.0, 100, "ok")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/status")
+
+        assert r.status_code == 200
+        assert r.json()["overview_breakdown"] == [
+            {
+                "key": ".jpg:ok",
+                "label": "Healthy JPG",
+                "ext": ".jpg",
+                "status": "ok",
+                "count": 2,
+                "tone": "healthy",
+            },
+            {
+                "key": ".jpg:corrupt",
+                "label": "Corrupt JPG",
+                "ext": ".jpg",
+                "status": "corrupt",
+                "count": 1,
+                "tone": "corrupt",
+            },
+            {
+                "key": ".jpg:unreadable",
+                "label": "Unreadable JPG",
+                "ext": ".jpg",
+                "status": "unreadable",
+                "count": 1,
+                "tone": "unreadable",
+            },
+            {
+                "key": ".mp4:ok",
+                "label": "Healthy MP4",
+                "ext": ".mp4",
+                "status": "ok",
+                "count": 1,
+                "tone": "healthy",
+            },
+        ]
+
 
 class TestApiEndpoints:
     async def test_api_app_returns_runtime_state(self, configured_app):

@@ -2,11 +2,50 @@
 
 {% block content %}
 
-{# ── Status hero ──────────────────────────────────────────── #}
-<div class="card">
-  <div class="status-hero">
-    <div>
-      <div class="status-row">
+{% set scheduler = status.get("scheduler") %}
+{% set ls = status.get("last_scan") %}
+{% set overview_breakdown = status.get("overview_breakdown", []) %}
+{% set n_ok = status.get("by_status", {}).get("ok", 0) | int %}
+{% set n_corrupt = status.get("by_status", {}).get("corrupt", 0) | int %}
+{% set n_unreadable = status.get("by_status", {}).get("unreadable", 0) | int %}
+{% set n_issues = n_corrupt + n_unreadable %}
+
+{% set hero_class = "is-ready" %}
+{% if banner.state == "Healthy" %}
+  {% set hero_class = "is-healthy" %}
+{% elif banner.state == "Scan running" %}
+  {% set hero_class = "is-running" %}
+{% elif banner.state == "Issues found" %}
+  {% set hero_class = "is-warning" %}
+{% elif banner.state in ["Configuration needed", "Access problem suspected"] %}
+  {% set hero_class = "is-degraded" %}
+{% endif %}
+
+{% set hero_title = "SemanticDog is ready to scan your library." %}
+{% set hero_detail = banner.detail %}
+{% if banner.state == "Healthy" %}
+  {% set hero_title = "All clear. Your library is healthy." %}
+  {% if ls and ls.get("scope") %}
+    {% set hero_detail = "Last scan completed without issues for " ~ ls.get("scope") ~ "." %}
+  {% else %}
+    {% set hero_detail = "No current corruption or access issues are recorded in the indexed library." %}
+  {% endif %}
+{% elif banner.state == "Issues found" %}
+  {% set hero_title = "Library Health Warning: Data Compromised." %}
+  {% set hero_detail = n_corrupt ~ " files are corrupted. " ~ n_unreadable ~ " files are unreadable. View details below." %}
+{% elif banner.state == "Scan running" %}
+  {% set hero_title = "Scan in progress. SemanticDog is checking your library." %}
+  {% set hero_detail = "Live progress appears below while files are being validated." %}
+{% elif banner.state == "Configuration needed" %}
+  {% set hero_title = "Configuration attention needed before trusting results." %}
+{% elif banner.state == "Access problem suspected" %}
+  {% set hero_title = "Library access warning. Scan roots may be unavailable." %}
+{% endif %}
+
+<div class="card dashboard-hero {{ hero_class }}" id="dashboard-hero">
+  <div class="dashboard-hero-inner">
+    <div class="dashboard-hero-copy">
+      <div class="dashboard-hero-status-row">
         {% if banner.state == "Healthy" %}
           <div id="status-dot" class="status-dot dot-green"></div>
         {% elif banner.state == "Scan running" %}
@@ -18,16 +57,17 @@
         {% else %}
           <div id="status-dot" class="status-dot dot-gray"></div>
         {% endif %}
-        <span class="status-name" id="banner-state">{{ banner.state }}</span>
+        <span class="dashboard-hero-status-text" id="banner-state">{{ banner.state }}</span>
       </div>
-      <div class="status-detail" id="banner-detail">{{ banner.detail }}</div>
+      <h1 class="dashboard-hero-title" id="dashboard-hero-title">{{ hero_title }}</h1>
+      <div class="dashboard-hero-detail" id="banner-detail">{{ hero_detail }}</div>
+      <div class="dashboard-hero-meta">
+        <span><span id="files-indexed">{{ status.files_indexed | default(0) | int }}</span> files indexed</span>
+        <span id="runtime-status" style="display:none;">{{ status.status }}</span>
+      </div>
     </div>
-    <div class="row" style="gap:0.75rem; align-items:center; flex-shrink:0; flex-wrap:wrap;">
-      <span class="text-3" style="font-size:0.8125rem;">
-        <span id="files-indexed">{{ status.files_indexed | default(0) | int }}</span> files indexed
-        &nbsp;·&nbsp; <span id="runtime-status" style="display:none;">{{ status.status }}</span>
-      </span>
-      <button id="run-scan-btn" class="btn btn-primary btn-sm"
+    <div class="dashboard-hero-actions">
+      <button id="run-scan-btn" class="btn btn-primary dashboard-hero-button"
         {% if status.status == 'scanning' %}disabled{% endif %}>
         {% if status.status == 'scanning' %}Scan running…{% else %}Run Scan{% endif %}
       </button>
@@ -35,162 +75,19 @@
   </div>
 </div>
 
-{% set scheduler = status.get("scheduler") %}
-<div class="card scheduler-card" id="scheduler-card">
-  <div class="row-between scheduler-head">
-    <div>
-      <div class="card-label">Scheduler</div>
-      <div class="scheduler-next" id="next-scan-info">
-        {% if scheduler and scheduler.get("last_error") %}
-          Schedule unavailable
-        {% elif scheduler and scheduler.get("next_run_at") %}
-          Next scan {{ scheduler.get("next_run_at") }}
-        {% elif scheduler and scheduler.get("enabled") %}
-          Scheduler enabled
-        {% else %}
-          Scheduler disabled
-        {% endif %}
-      </div>
-      <div class="scheduler-rel text-3" id="next-scan-relative">
-        {% if scheduler and scheduler.get("last_error") %}
-          Fix the schedule expression in Configuration.
-        {% elif scheduler and scheduler.get("next_run_at") %}
-          scheduled automatically
-        {% else %}
-          waiting for a schedule
-        {% endif %}
-      </div>
-    </div>
-    <div class="badge {% if scheduler and scheduler.get('last_error') %}badge-red{% elif scheduler and scheduler.get('enabled') %}badge-indigo{% else %}badge-gray{% endif %}" id="scheduler-badge">
-      {% if scheduler and scheduler.get('last_error') %}
-        Error
-      {% elif scheduler and scheduler.get('enabled') %}
-        Active
-      {% else %}
-        Disabled
-      {% endif %}
-    </div>
-  </div>
-  <div class="grid-3 scheduler-grid">
-    <div>
-      <div class="scheduler-meta-label">Last scheduled run</div>
-      <div class="scheduler-meta-value" id="scheduler-last-run">
-        {% if scheduler and scheduler.get("last_run_at") %}
-          {{ scheduler.get("last_run_at") }}
-        {% else %}
-          Never
-        {% endif %}
-      </div>
-    </div>
-    <div>
-      <div class="scheduler-meta-label">Last result</div>
-      <div class="scheduler-meta-value" id="scheduler-last-result">
-        {{ scheduler.get("last_trigger_result") if scheduler and scheduler.get("last_trigger_result") else "No runs yet" }}
-      </div>
-    </div>
-    <div>
-      <div class="scheduler-meta-label">Schedule</div>
-      <div class="scheduler-meta-value mono" id="scheduler-cron">
-        {{ scheduler.get("cron") if scheduler and scheduler.get("cron") else "disabled" }}
-      </div>
-    </div>
-  </div>
-  <div class="scheduler-error text-red" id="scheduler-error" {% if not scheduler or not scheduler.get("last_error") %}style="display:none;"{% endif %}>
-    {% if scheduler and scheduler.get("last_error") %}
-      {{ scheduler.get("last_error") }}
-    {% endif %}
-  </div>
-</div>
-
-{# ── Stat cards ───────────────────────────────────────────── #}
-<div class="dashboard-overview-grid">
-  <div class="card compact-stat-card">
-    <div class="card-label">Indexed</div>
-    <div class="stat-num" id="count-ok">
-      {{ status.get("by_status", {}).get("ok", 0) | int }}
-    </div>
-    <div class="stat-label">files indexed</div>
-  </div>
-
-  {% set n_corrupt    = status.get("by_status", {}).get("corrupt",    0) | int %}
-  {% set n_unreadable = status.get("by_status", {}).get("unreadable", 0) | int %}
-
-  <div class="card compact-stat-card{% if n_corrupt > 0 %} card-danger{% endif %}" id="corrupt-card">
-    <div class="card-label">Corrupt</div>
-    <div class="stat-num {% if n_corrupt > 0 %}text-red{% else %}text-3{% endif %}" id="count-corrupt">
-      {{ n_corrupt }}
-    </div>
-    <div class="stat-label">
-      {% if n_corrupt > 0 %}
-        <a href="/issues" style="color:var(--red);">view issues →</a>
-      {% else %}
-        files corrupt
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="card compact-stat-card{% if n_unreadable > 0 %} card-warn{% endif %}" id="unreadable-card">
-    <div class="card-label">Unreadable</div>
-    <div class="stat-num {% if n_unreadable > 0 %}text-amber{% else %}text-3{% endif %}" id="count-unreadable">
-      {{ n_unreadable }}
-    </div>
-    <div class="stat-label">
-      {% if n_unreadable > 0 %}
-        <a href="/issues" style="color:var(--amber);">view issues →</a>
-      {% else %}
-        files unreadable
-      {% endif %}
-    </div>
-  </div>
-</div>
-
-{% set file_types = status.get("file_types", []) %}
-<div class="card chart-card">
-  <div class="row-between" style="align-items:flex-start; gap:0.75rem; flex-wrap:wrap;">
-    <div>
-      <div class="card-label">File Types</div>
-      <div class="text-2" style="font-size:0.8125rem;">Distribution of indexed files by extension.</div>
-    </div>
-  </div>
-  <div class="filetype-layout" id="filetype-layout" {% if not file_types %}style="display:none;"{% endif %}>
-    <div class="filetype-chart-wrap">
-      <svg id="filetype-chart" class="filetype-chart" viewBox="0 0 240 240" role="img" aria-label="Pie chart of indexed file types" data-file-types='{{ file_types | tojson }}'></svg>
-      <div class="filetype-chart-center">
-        <div class="filetype-chart-total" id="filetype-chart-total">{{ status.files_indexed | default(0) | int }}</div>
-        <div class="filetype-chart-caption">files</div>
-      </div>
-    </div>
-    <div class="filetype-legend" id="filetype-legend">
-      {% for item in file_types %}
-      <div class="filetype-legend-row">
-        <div class="row" style="gap:0.625rem; min-width:0;">
-          <span class="filetype-swatch" data-color-index="{{ loop.index0 }}"></span>
-          <span class="filetype-label">{{ item.label }}</span>
-        </div>
-        <div class="filetype-meta">
-          <span class="filetype-count">{{ item.count }}</span>
-          <span class="filetype-percent">{{ item.percent }}%</span>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  <div class="empty-state" id="filetype-empty" style="padding:1.5rem 1rem;{% if file_types %} display:none;{% endif %}">
-    <div class="empty-title">No indexed files yet</div>
-    <div class="empty-desc">Run a scan to see which file types make up this library.</div>
-  </div>
-</div>
-
 {# ── Active scan (shown while scanning) ────────────────────── #}
 <div id="scan-progress-section"
      style="{% if not current_scan or current_scan.state not in ['starting', 'running'] %}display:none;{% endif %}">
-  <div class="card">
-    <div class="row-between" style="margin-bottom:0.75rem;">
-      <div class="row">
-        <span class="badge badge-blue">Active Scan</span>
-        <span class="text-3 mono" style="font-size:0.6875rem;">
-          {% if current_scan %}{{ current_scan.scan_id[:8] }}…{% endif %}
-        </span>
+  <div class="card dashboard-scan-progress-card">
+    <div class="row-between" style="margin-bottom:0.75rem; align-items:flex-start;">
+      <div>
+        <div class="card-label">Active Scan</div>
+        <div class="row" style="gap:0.5rem; flex-wrap:wrap; margin-top:0.15rem;">
+          <span class="badge badge-blue">Validating files</span>
+          <span class="text-3 mono" style="font-size:0.6875rem;">
+            {% if current_scan %}{{ current_scan.scan_id[:8] }}…{% endif %}
+          </span>
+        </div>
       </div>
       <span class="text-3" style="font-size:0.75rem;" id="scan-eta">
         {% if current_scan and current_scan.eta_s %}~{{ (current_scan.eta_s / 60) | round(0, 'ceil') | int }}m remaining{% endif %}
@@ -218,76 +115,147 @@
   </div>
 </div>
 
-{# ── Idle: last scan + setup warnings ─────────────────────── #}
 <div id="scan-idle-section"
      style="{% if current_scan and current_scan.state in ['starting', 'running'] %}display:none;{% endif %}">
 
-  {% set ls = status.get("last_scan") %}
-  {% if ls %}
-  <div class="card last-scan-card">
-    <div class="last-scan-layout">
-      <div class="col" style="min-width:0;">
-        <div class="card-label">Last Scan</div>
-        <div class="row" style="gap:0.625rem; flex-wrap:wrap; margin-top:0.25rem;">
-          {% if ls.get("finished_at") %}
-            {% set had_issues = (ls.get("corrupt") or 0) + (ls.get("unreadable") or 0) %}
-            {% if had_issues > 0 %}
-              <span class="badge badge-red">{{ had_issues }} issue{{ 's' if had_issues != 1 else '' }}</span>
-            {% else %}
-              <span class="badge badge-green">Clean</span>
-            {% endif %}
-          {% else %}
-            <span class="badge badge-amber">Incomplete</span>
-          {% endif %}
-          <span class="text-2" style="font-size:0.8125rem;" data-time="{{ ls.get('started_at', '') }}">
-            {{ ls.get("started_at", "") }}
-          </span>
+  <div class="dashboard-shell" id="dashboard-shell">
+    <div class="card dashboard-panel dashboard-timeline-card" id="dashboard-timeline-card">
+      <div class="dashboard-panel-title">Library Activity Timeline</div>
+      <div class="dashboard-timeline-rail">
+        <div class="dashboard-timeline-step" id="timeline-last-scan">
+          <div class="dashboard-timeline-marker {% if ls and n_issues > 0 %}is-danger{% elif ls %}is-success{% else %}is-muted{% endif %}" id="timeline-last-dot"></div>
+          <div class="dashboard-timeline-content">
+            <div class="dashboard-timeline-title" id="timeline-last-title">
+              {% if ls and ls.get("finished_at") and n_issues > 0 %}
+                1. Last scan completed with issues
+              {% elif ls and ls.get("finished_at") %}
+                1. Last Scan: <span id="timeline-last-when" data-time="{{ ls.get('started_at', '') }}">{{ ls.get("started_at", "") }}</span>
+              {% elif ls %}
+                1. Last scan incomplete
+              {% else %}
+                1. No scans yet
+              {% endif %}
+            </div>
+            <div class="dashboard-timeline-meta" id="timeline-last-meta">
+              {% if ls and ls.get("finished_at") %}
+                <span>Duration: <span id="timeline-last-duration" data-dur-start="{{ ls.get('started_at', '') }}" data-dur-end="{{ ls.get('finished_at', '') }}">{{ ls.get("finished_at", "") }}</span>.</span>
+                <span>Scan Speed: <span id="timeline-last-rate">{% if ls.get("files_per_sec") %}{{ "%.1f"|format(ls.get("files_per_sec")) }} f/s{% else %}—{% endif %}</span></span>
+              {% elif ls %}
+                <span>Scan started but did not finish cleanly.</span>
+              {% else %}
+                <span>Run your first scan to establish a baseline.</span>
+              {% endif %}
+            </div>
+            <div class="dashboard-timeline-submeta" id="timeline-last-submeta">
+              <span class="mono" id="timeline-last-scope">{{ ls.get("scope") if ls else "all configured paths" }}</span>
+              <span id="last-scan-files-checked">{{ ls.get("total", 0) | int if ls else 0 }}</span>
+              <span>files examined</span>
+            </div>
+          </div>
         </div>
-        <div class="text-3 mono last-scan-scope">
-          {{ ls.get("scope") or "all configured paths" }}
+
+        <div class="dashboard-timeline-step" id="timeline-next-scan">
+          <div class="dashboard-timeline-marker {% if scheduler and scheduler.get('last_error') %}is-danger{% elif scheduler and scheduler.get('enabled') %}is-info{% else %}is-muted{% endif %}" id="timeline-next-dot"></div>
+          <div class="dashboard-timeline-content">
+            <div class="dashboard-timeline-title">
+              <span class="dashboard-timeline-index">2.</span>
+              <span id="next-scan-info">
+                {% if scheduler and scheduler.get("last_error") %}
+                  Schedule unavailable
+                {% elif scheduler and scheduler.get("next_run_at") %}
+                  Next scan {{ scheduler.get("next_run_at") }}
+                {% elif scheduler and scheduler.get("enabled") %}
+                  Scheduler enabled
+                {% else %}
+                  Scheduler disabled
+                {% endif %}
+              </span>
+            </div>
+            <div class="dashboard-timeline-meta" id="next-scan-relative">
+              {% if scheduler and scheduler.get("last_error") %}
+                Fix the schedule expression in Configuration.
+              {% elif scheduler and scheduler.get("next_run_at") %}
+                scheduled automatically
+              {% else %}
+                waiting for a schedule
+              {% endif %}
+            </div>
+            <div class="dashboard-timeline-submeta dashboard-timeline-submeta-wrap">
+              <span>Schedule</span>
+              <span class="timeline-chip mono" id="scheduler-cron">{{ scheduler.get("cron") if scheduler and scheduler.get("cron") else "disabled" }}</span>
+              <span class="timeline-chip {% if scheduler and scheduler.get('last_error') %}timeline-chip-danger{% elif scheduler and scheduler.get('enabled') %}timeline-chip-info{% endif %}" id="scheduler-badge">
+                {% if scheduler and scheduler.get('last_error') %}
+                  Error
+                {% elif scheduler and scheduler.get('enabled') %}
+                  Active
+                {% else %}
+                  Disabled
+                {% endif %}
+              </span>
+            </div>
+            <div class="dashboard-timeline-footnote text-3">
+              <span>Last scheduled run: <span id="scheduler-last-run">{% if scheduler and scheduler.get("last_run_at") %}{{ scheduler.get("last_run_at") }}{% else %}Never{% endif %}</span></span>
+              <span>Last result: <span id="scheduler-last-result">{{ scheduler.get("last_trigger_result") if scheduler and scheduler.get("last_trigger_result") else "No runs yet" }}</span></span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {% set had_issues = (ls.get("corrupt") or 0) + (ls.get("unreadable") or 0) %}
-      <div class="last-scan-metrics">
-        <div class="last-scan-metric">
-          <div class="last-scan-metric-value text-1" id="last-scan-files-checked">{{ ls.get("total", 0) | int }}</div>
-          <div class="last-scan-metric-label">Files examined</div>
-        </div>
-        <div class="last-scan-metric">
-          <div class="last-scan-metric-value text-1" data-dur-start="{{ ls.get('started_at', '') }}" data-dur-end="{{ ls.get('finished_at', '') }}">
-            {% if ls.get("finished_at") %}{{ ls.get("finished_at", "") }}{% else %}—{% endif %}
+      <div class="scheduler-error text-red" id="scheduler-error" {% if not scheduler or not scheduler.get("last_error") %}style="display:none;"{% endif %}>
+        {% if scheduler and scheduler.get("last_error") %}
+          {{ scheduler.get("last_error") }}
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card dashboard-panel dashboard-overview-card" id="dashboard-overview-card">
+      <div class="dashboard-panel-title">Library Health &amp; File Overview</div>
+      <div class="dashboard-overview-total" id="overview-total-files">{{ status.files_indexed | default(0) | int }}</div>
+      <div class="dashboard-overview-caption">Total Files Indexed</div>
+
+      <div class="overview-chart-layout" id="overview-chart-layout" {% if not overview_breakdown %}style="display:none;"{% endif %}>
+        <div class="filetype-chart-wrap overview-chart-wrap">
+          <svg id="overview-chart" class="filetype-chart overview-chart" viewBox="0 0 240 240" role="img" aria-label="Chart of indexed files by health and format" data-overview-breakdown='{{ overview_breakdown | tojson }}'></svg>
+          <div class="filetype-chart-center overview-chart-center">
+            <div class="filetype-chart-total" id="overview-chart-total">{{ status.files_indexed | default(0) | int }}</div>
+            <div class="filetype-chart-caption">files</div>
           </div>
-          <div class="last-scan-metric-label">Duration</div>
         </div>
-        <div class="last-scan-metric">
-          <div class="last-scan-metric-value {% if had_issues > 0 %}text-red{% else %}text-1{% endif %}">{{ had_issues }}</div>
-          <div class="last-scan-metric-label">Issues found</div>
-        </div>
-        <div class="last-scan-metric">
-          <div class="last-scan-metric-value text-1">
-            {% if ls.get("files_per_sec") %}
-              {{ "%.1f"|format(ls.get("files_per_sec")) }} f/s
-            {% else %}
-              —
-            {% endif %}
+
+        <div class="filetype-legend overview-legend" id="overview-legend">
+          {% for item in overview_breakdown %}
+          <div class="filetype-legend-row overview-legend-row overview-tone-{{ item.tone }}">
+            <div class="row" style="gap:0.625rem; min-width:0;">
+              <span class="filetype-swatch overview-swatch overview-tone-{{ item.tone }}"></span>
+              <span class="filetype-label">{{ item.label }}</span>
+            </div>
+            <div class="filetype-meta">
+              <span class="filetype-count">{{ item.count }}</span>
+              <span class="filetype-percent">{% if status.files_indexed %}{{ ((item.count / status.files_indexed) * 100) | round(1) }}%{% else %}0%{% endif %}</span>
+            </div>
           </div>
-          <div class="last-scan-metric-label">Average rate</div>
+          {% endfor %}
         </div>
+      </div>
+
+      <div class="empty-state overview-empty" id="overview-empty" style="padding:1.5rem 1rem;{% if overview_breakdown %} display:none;{% endif %}">
+        <div class="empty-title">No indexed files yet</div>
+        <div class="empty-desc">Run a scan to see the health of this library and which file types dominate it.</div>
+      </div>
+
+      <div class="overview-pill-row">
+        <a href="/issues" class="overview-pill overview-pill-corrupt{% if n_corrupt > 0 %} is-active{% endif %}" id="overview-corrupt-pill">
+          <span class="overview-pill-label">Corrupt Files</span>
+          <span class="overview-pill-value" id="count-corrupt">{{ n_corrupt }}</span>
+        </a>
+        <a href="/issues" class="overview-pill overview-pill-unreadable{% if n_unreadable > 0 %} is-active{% endif %}" id="overview-unreadable-pill">
+          <span class="overview-pill-label">Unreadable Files</span>
+          <span class="overview-pill-value" id="count-unreadable">{{ n_unreadable }}</span>
+        </a>
       </div>
     </div>
   </div>
-  {% else %}
-  <div class="card">
-    <div class="empty-state" style="padding:2rem 1rem;">
-      <div class="empty-icon">📂</div>
-      <div class="empty-title">No scans yet</div>
-      <div class="empty-desc">Run your first scan to establish a baseline for this library.</div>
-    </div>
-  </div>
-  {% endif %}
 
-  {# Setup warnings #}
   {% if setup.warnings %}
   <div class="alert alert-amber">
     <span style="flex-shrink:0; font-size:0.875rem;">⚠</span>

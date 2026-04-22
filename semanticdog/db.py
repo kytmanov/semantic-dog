@@ -328,6 +328,29 @@ class Database:
         finally:
             conn.close()
 
+    def get_format_status_counts(self) -> list[dict[str, Any]]:
+        """Return file counts grouped by extension and status, sorted by count descending."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    CASE
+                        WHEN path LIKE '%.%'
+                            THEN lower(substr(path, length(path) - instr(reverse(path), '.') + 1))
+                        ELSE '(no ext)'
+                    END AS ext,
+                    status,
+                    COUNT(*) AS cnt
+                FROM files
+                GROUP BY ext, status
+                ORDER BY cnt DESC, ext ASC, status ASC
+                """
+            ).fetchall()
+            return [{"ext": r["ext"], "status": r["status"], "count": r["cnt"]} for r in rows]
+        finally:
+            conn.close()
+
     def get_stale_count(self, days: int) -> int:
         """Return count of files not checked in the last `days` days."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

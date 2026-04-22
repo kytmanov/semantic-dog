@@ -171,6 +171,78 @@ def _file_type_breakdown(db: "Database | None", limit: int = 6) -> list[dict[str
     return payload
 
 
+def _format_extension_label(ext: str) -> str:
+    if ext == "(no ext)":
+        return "No ext"
+    if ext == "other":
+        return "Others"
+    return ext[1:].upper() if ext.startswith(".") else ext.upper()
+
+
+def _overview_breakdown(db: "Database | None", limit: int = 6) -> list[dict[str, Any]]:
+    if db is None:
+        return []
+
+    rows = db.get_format_status_counts()
+    if not rows:
+        return []
+
+    ext_totals: dict[str, int] = {}
+    for row in rows:
+        ext = str(row["ext"])
+        ext_totals[ext] = ext_totals.get(ext, 0) + int(row["count"])
+
+    primary_exts = [ext for ext, _ in sorted(ext_totals.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+    segments: list[dict[str, Any]] = []
+    other_total = 0
+    tone_by_status = {
+        "ok": "healthy",
+        "corrupt": "corrupt",
+        "unreadable": "unreadable",
+        "unsupported": "other",
+        "error": "other",
+    }
+    prefix_by_status = {
+        "ok": "Healthy",
+        "corrupt": "Corrupt",
+        "unreadable": "Unreadable",
+        "unsupported": "Unsupported",
+        "error": "Error",
+    }
+
+    for row in rows:
+        ext = str(row["ext"])
+        status = str(row["status"])
+        count = int(row["count"])
+        if ext not in primary_exts:
+            other_total += count
+            continue
+        segments.append(
+            {
+                "key": f"{ext}:{status}",
+                "label": f"{prefix_by_status.get(status, status.replace('_', ' ').title())} {_format_extension_label(ext)}",
+                "ext": ext,
+                "status": status,
+                "count": count,
+                "tone": tone_by_status.get(status, "other"),
+            }
+        )
+
+    if other_total > 0:
+        segments.append(
+            {
+                "key": "other:other",
+                "label": "Others",
+                "ext": "other",
+                "status": "other",
+                "count": other_total,
+                "tone": "other",
+            }
+        )
+
+    return segments
+
+
 def _changed_restart_fields(payload: dict[str, Any], current_cfg: "Config | None") -> set[str]:
     if current_cfg is None:
         return set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
@@ -421,6 +493,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 "by_status": stats.get("by_status", {}),
                 "last_scan": last_scan,
                 "file_types": _file_type_breakdown(db),
+                "overview_breakdown": _overview_breakdown(db),
                 "current_scan": None if current_scan is None else current_scan.__dict__,
                 "scheduler": None if scheduler is None else scheduler.as_dict(),
             }
