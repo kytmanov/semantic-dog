@@ -111,6 +111,15 @@ def test_user_can_add_second_root_then_run_scan_from_dashboard(tmp_path: Path):
             page.get_by_role("button", name="Save Configuration").click()
             expect(page.locator("#config-feedback")).to_have_text("Saved successfully.")
 
+            page.goto(f"http://127.0.0.1:{port}/setup")
+            setup_scan_roots = page.locator(".card").filter(has_text="Scan Roots").first
+            expect(setup_scan_roots).to_contain_text(str(library_a))
+            scan_roots = page.locator("#f-paths")
+            scan_roots.fill(f"{library_a}\n{library_b}")
+            page.get_by_role("button", name="Save Configuration").click()
+            page.wait_for_load_state("load")
+            expect(setup_scan_roots).to_contain_text(str(library_b))
+
             page.goto(f"http://127.0.0.1:{port}/dashboard")
             expect(page.locator("#banner-state")).to_have_text("Ready to scan")
             expect(page.locator("#next-scan-info")).to_contain_text("Next scan")
@@ -124,6 +133,8 @@ def test_user_can_add_second_root_then_run_scan_from_dashboard(tmp_path: Path):
             expect(page.locator("#files-indexed")).to_have_text("4", timeout=10000)
             expect(page.locator("#count-corrupt")).to_have_text("2", timeout=10000)
             expect(page.locator("#banner-state")).to_have_text("Issues found", timeout=10000)
+            expect(page.locator("#filetype-chart")).to_be_visible()
+            expect(page.locator(".filetype-label", has_text="JPG")).to_be_visible()
 
             page.get_by_role("link", name="Issues").click()
             expect(page.get_by_role("cell", name=f"bad-b.jpg {library_b}/")).to_be_visible()

@@ -10,19 +10,21 @@
 </div>
 
 {# ── Warnings ─────────────────────────────────────────────── #}
-{% if setup.warnings %}
-<div class="alert alert-amber">
-  <span style="flex-shrink:0;">⚠</span>
-  <div>
-    <strong>{{ setup.warnings | length }} warning{{ 's' if setup.warnings | length != 1 else '' }} detected</strong>
-    <ul class="alert-list">
-      {% for w in setup.warnings %}
-      <li>{{ w }}</li>
-      {% endfor %}
-    </ul>
+<div id="setup-warnings" {% if not setup.warnings %}style="display:none;"{% endif %}>
+  {% if setup.warnings %}
+  <div class="alert alert-amber">
+    <span style="flex-shrink:0;">⚠</span>
+    <div>
+      <strong>{{ setup.warnings | length }} warning{{ 's' if setup.warnings | length != 1 else '' }} detected</strong>
+      <ul class="alert-list">
+        {% for w in setup.warnings %}
+        <li>{{ w }}</li>
+        {% endfor %}
+      </ul>
+    </div>
   </div>
+  {% endif %}
 </div>
-{% endif %}
 
 {# ── System checks ────────────────────────────────────────── #}
 <div class="grid-2">
@@ -74,32 +76,34 @@
 {# ── Scan roots ───────────────────────────────────────────── #}
 <div class="card">
   <div class="card-label">Scan Roots</div>
-  {% if setup.scan_roots %}
-    {% for root in setup.scan_roots %}
-    {% set all_ok = root.exists and root.is_dir and root.readable %}
-    <div class="diag-row">
-      <div class="diag-icon {% if all_ok %}ok{% elif root.exists %}warn{% else %}error{% endif %}">
-        {% if all_ok %}✓{% elif root.exists %}!{% else %}✗{% endif %}
-      </div>
-      <div>
-        <div class="diag-name mono" style="font-size:0.8125rem;">{{ root.path }}</div>
-        <div class="row" style="gap:0.5rem; margin-top:3px;">
-          {% if not root.exists %}
-            <span class="badge badge-red">not found</span>
-          {% elif not root.is_dir %}
-            <span class="badge badge-amber">not a directory</span>
-          {% elif not root.readable %}
-            <span class="badge badge-amber">not readable</span>
-          {% else %}
-            <span class="badge badge-green">accessible</span>
-          {% endif %}
+  <div id="setup-scan-roots-list">
+    {% if setup.scan_roots %}
+      {% for root in setup.scan_roots %}
+      {% set all_ok = root.exists and root.is_dir and root.readable %}
+      <div class="diag-row">
+        <div class="diag-icon {% if all_ok %}ok{% elif root.exists %}warn{% else %}error{% endif %}">
+          {% if all_ok %}✓{% elif root.exists %}!{% else %}✗{% endif %}
+        </div>
+        <div>
+          <div class="diag-name mono" style="font-size:0.8125rem;">{{ root.path }}</div>
+          <div class="row" style="gap:0.5rem; margin-top:3px;">
+            {% if not root.exists %}
+              <span class="badge badge-red">not found</span>
+            {% elif not root.is_dir %}
+              <span class="badge badge-amber">not a directory</span>
+            {% elif not root.readable %}
+              <span class="badge badge-amber">not readable</span>
+            {% else %}
+              <span class="badge badge-green">accessible</span>
+            {% endif %}
+          </div>
         </div>
       </div>
-    </div>
-    {% endfor %}
-  {% else %}
-  <div class="text-3" style="font-size:0.8125rem; padding:0.5rem 0;">No scan roots configured yet.</div>
-  {% endif %}
+      {% endfor %}
+    {% else %}
+    <div class="text-3" style="font-size:0.8125rem; padding:0.5rem 0;">No scan roots configured yet.</div>
+    {% endif %}
+  </div>
 </div>
 
 {# ── First-run configuration form ─────────────────────────── #}

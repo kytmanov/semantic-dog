@@ -7,6 +7,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from semanticdog.notify import Notifier, ScanSummary
 from semanticdog.scanner import ScanProgressSnapshot, Scanner
@@ -29,10 +30,12 @@ class ScanManager:
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sdog-scan")
         self._active_future: Future | None = None
+        self._active_origin: str | None = None
         self._current_snapshot: ScanProgressSnapshot | None = None
         self._last_snapshot: ScanProgressSnapshot | None = None
         self._last_error: str | None = None
         self._last_notification_errors: list[str] = []
+        self._last_run_summaries: dict[str, dict[str, Any]] = {}
 
     def is_running(self) -> bool:
         with self._lock:
@@ -54,11 +57,28 @@ class ScanManager:
         with self._lock:
             return list(self._last_notification_errors)
 
-    def start(self, scope: str | None = None) -> ScanStartResult:
-        return self._launch(scope=scope, resume_scan_id=None)
+    def active_origin(self) -> str | None:
+        with self._lock:
+            return self._active_origin
 
-    def resume(self, scan_id: str) -> ScanStartResult:
-        return self._launch(scope=None, resume_scan_id=scan_id)
+    def last_run_summary(self, origin: str | None = None) -> dict[str, Any] | None:
+        with self._lock:
+            if origin is not None:
+                summary = self._last_run_summaries.get(origin)
+                return None if summary is None else dict(summary)
+            if not self._last_run_summaries:
+                return None
+            _, summary = max(
+                self._last_run_summaries.items(),
+                key=lambda item: item[1].get("finished_at") or item[1].get("started_at") or "",
+            )
+            return dict(summary)
+
+    def start(self, scope: str | None = None, *, origin: str = "manual") -> ScanStartResult:
+        return self._launch(scope=scope, resume_scan_id=None, origin=origin)
+
+    def resume(self, scan_id: str, *, origin: str = "manual") -> ScanStartResult:
+        return self._launch(scope=None, resume_scan_id=scan_id, origin=origin)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -69,7 +89,7 @@ class ScanManager:
             self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sdog-scan")
         executor.shutdown(wait=False)
 
-    def _launch(self, scope: str | None, resume_scan_id: str | None) -> ScanStartResult:
+    def _launch(self, scope: str | None, resume_scan_id: str | None, origin: str) -> ScanStartResult:
         with self._lock:
             if self._active_future is not None and not self._active_future.done():
                 active_scan_id = self._current_snapshot.scan_id if self._current_snapshot else None
@@ -82,12 +102,13 @@ class ScanManager:
 
             self._current_snapshot = None
             self._last_error = None
-            future = self._executor.submit(self._run_scan, scope, resume_scan_id)
+            self._active_origin = origin
+            future = self._executor.submit(self._run_scan, scope, resume_scan_id, origin)
             self._active_future = future
 
         return ScanStartResult(accepted=True)
 
-    def _run_scan(self, scope: str | None, resume_scan_id: str | None) -> None:
+    def _run_scan(self, scope: str | None, resume_scan_id: str | None, origin: str) -> None:
         try:
             scanner = Scanner(self._cfg, self._db)
             if resume_scan_id:
@@ -99,6 +120,19 @@ class ScanManager:
         except Exception as e:
             with self._lock:
                 self._last_error = str(e)
+                snapshot = self._last_snapshot
+                if self._active_origin == origin and origin not in self._last_run_summaries:
+                    self._last_run_summaries[origin] = {
+                        "state": "failed",
+                        "scan_id": snapshot.scan_id if snapshot else None,
+                        "started_at": snapshot.started_at if snapshot else None,
+                        "finished_at": snapshot.finished_at if snapshot else None,
+                        "processed": snapshot.processed if snapshot else 0,
+                        "issues": (snapshot.corrupt + snapshot.unreadable) if snapshot else 0,
+                        "last_error": str(e),
+                    }
+                if self._active_origin == origin:
+                    self._active_origin = None
             raise
 
     def _send_notifications(self, stats) -> None:
@@ -131,7 +165,7 @@ class ScanManager:
             scan_id=stats.scan_id,
             scope=scan.get("scope") or ",".join(self._cfg.paths),
             duration_s=duration_s,
-            total_checked=stats.total,
+            total_checked=int(scan.get("total") or stats.total),
             corrupt=corrupt,
             unreadable=unreadable,
         )
@@ -147,3 +181,14 @@ class ScanManager:
             self._last_snapshot = snapshot
             if snapshot.state == "failed":
                 self._last_error = snapshot.last_error
+            if snapshot.state in {"completed", "failed", "interrupted"} and self._active_origin is not None:
+                self._last_run_summaries[self._active_origin] = {
+                    "state": snapshot.state,
+                    "scan_id": snapshot.scan_id,
+                    "started_at": snapshot.started_at,
+                    "finished_at": snapshot.finished_at,
+                    "processed": snapshot.processed,
+                    "issues": snapshot.corrupt + snapshot.unreadable,
+                    "last_error": snapshot.last_error,
+                }
+                self._active_origin = None

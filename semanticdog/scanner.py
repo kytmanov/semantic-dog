@@ -455,9 +455,10 @@ class Scanner:
             raise
         finally:
             if not interrupted and not self._shutdown.is_set() and not failed:
+                files_examined = max(processed_count - stats.toctou_discards, 0)
                 self.db.finish_scan(
                     scan_id,
-                    total=stats.total,
+                    total=files_examined,
                     corrupt=stats.corrupt,
                     unreadable=stats.unreadable,
                     files_per_sec=stats.files_per_sec(),

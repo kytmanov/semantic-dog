@@ -214,6 +214,19 @@ class TestStatusEndpoint:
         assert "scheduler" in r.json()
         assert r.json()["scheduler"]["enabled"] is True
 
+    async def test_status_includes_file_type_breakdown(self, configured_app, db):
+        db.record("/img.jpg", 1.0, 100, "ok")
+        db.record("/clip.mp4", 1.0, 100, "ok")
+        db.record("/other.jpg", 1.0, 100, "ok")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/status")
+
+        assert r.status_code == 200
+        assert r.json()["file_types"][0]["label"] == "JPG"
+        assert r.json()["file_types"][0]["count"] == 2
+        assert r.json()["file_types"][1]["label"] == "MP4"
+
 
 class TestApiEndpoints:
     async def test_api_app_returns_runtime_state(self, configured_app):

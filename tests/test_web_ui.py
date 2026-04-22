@@ -162,6 +162,24 @@ class TestWebUi:
         assert "No runs yet" in r.text
         assert "Never" in r.text
 
+    async def test_dashboard_renders_file_type_chart(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        db = Database(cfg.db_path)
+        scan_id = db.create_scan(scope=str(tmp_path))
+        db.record(str(tmp_path / "img.jpg"), 1.0, 100, "ok", scan_id=scan_id)
+        db.record(str(tmp_path / "clip.mp4"), 1.0, 100, "ok", scan_id=scan_id)
+        db.finish_scan(scan_id, total=2, corrupt=0, unreadable=0, files_per_sec=1.0)
+        app = create_app(AppRuntime(cfg=cfg, db=db))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert 'id="filetype-chart"' in r.text
+        assert "Distribution of indexed files by extension." in r.text
+        assert "JPG" in r.text
+        assert "MP4" in r.text
+
     async def test_dashboard_shows_scheduler_error_for_invalid_cron(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), schedule="not-a-cron")
         app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))

@@ -103,8 +103,8 @@
 </div>
 
 {# ── Stat cards ───────────────────────────────────────────── #}
-<div class="grid-3">
-  <div class="card" style="padding:1rem;">
+<div class="dashboard-overview-grid">
+  <div class="card compact-stat-card">
     <div class="card-label">Indexed</div>
     <div class="stat-num" id="count-ok">
       {{ status.get("by_status", {}).get("ok", 0) | int }}
@@ -115,7 +115,7 @@
   {% set n_corrupt    = status.get("by_status", {}).get("corrupt",    0) | int %}
   {% set n_unreadable = status.get("by_status", {}).get("unreadable", 0) | int %}
 
-  <div class="card{% if n_corrupt > 0 %} card-danger{% endif %}" id="corrupt-card" style="padding:1rem;">
+  <div class="card compact-stat-card{% if n_corrupt > 0 %} card-danger{% endif %}" id="corrupt-card">
     <div class="card-label">Corrupt</div>
     <div class="stat-num {% if n_corrupt > 0 %}text-red{% else %}text-3{% endif %}" id="count-corrupt">
       {{ n_corrupt }}
@@ -129,7 +129,7 @@
     </div>
   </div>
 
-  <div class="card{% if n_unreadable > 0 %} card-warn{% endif %}" id="unreadable-card" style="padding:1rem;">
+  <div class="card compact-stat-card{% if n_unreadable > 0 %} card-warn{% endif %}" id="unreadable-card">
     <div class="card-label">Unreadable</div>
     <div class="stat-num {% if n_unreadable > 0 %}text-amber{% else %}text-3{% endif %}" id="count-unreadable">
       {{ n_unreadable }}
@@ -141,6 +141,43 @@
         files unreadable
       {% endif %}
     </div>
+  </div>
+</div>
+
+{% set file_types = status.get("file_types", []) %}
+<div class="card chart-card">
+  <div class="row-between" style="align-items:flex-start; gap:0.75rem; flex-wrap:wrap;">
+    <div>
+      <div class="card-label">File Types</div>
+      <div class="text-2" style="font-size:0.8125rem;">Distribution of indexed files by extension.</div>
+    </div>
+  </div>
+  <div class="filetype-layout" id="filetype-layout" {% if not file_types %}style="display:none;"{% endif %}>
+    <div class="filetype-chart-wrap">
+      <svg id="filetype-chart" class="filetype-chart" viewBox="0 0 240 240" role="img" aria-label="Pie chart of indexed file types" data-file-types='{{ file_types | tojson }}'></svg>
+      <div class="filetype-chart-center">
+        <div class="filetype-chart-total" id="filetype-chart-total">{{ status.files_indexed | default(0) | int }}</div>
+        <div class="filetype-chart-caption">files</div>
+      </div>
+    </div>
+    <div class="filetype-legend" id="filetype-legend">
+      {% for item in file_types %}
+      <div class="filetype-legend-row">
+        <div class="row" style="gap:0.625rem; min-width:0;">
+          <span class="filetype-swatch" data-color-index="{{ loop.index0 }}"></span>
+          <span class="filetype-label">{{ item.label }}</span>
+        </div>
+        <div class="filetype-meta">
+          <span class="filetype-count">{{ item.count }}</span>
+          <span class="filetype-percent">{{ item.percent }}%</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="empty-state" id="filetype-empty" style="padding:1.5rem 1rem;{% if file_types %} display:none;{% endif %}">
+    <div class="empty-title">No indexed files yet</div>
+    <div class="empty-desc">Run a scan to see which file types make up this library.</div>
   </div>
 </div>
 

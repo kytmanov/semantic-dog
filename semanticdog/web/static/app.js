@@ -324,6 +324,142 @@ function updateSchedulerCard(scheduler) {
   }
 }
 
+const FILETYPE_COLORS = ['#4f8ef7', '#22d3a6', '#f8b84a', '#f06b6b', '#7c8ef5', '#66d9ef', '#94a3b8'];
+
+function polarToCartesian(cx, cy, r, angleDeg) {
+  const angle = ((angleDeg - 90) * Math.PI) / 180;
+  return {
+    x: cx + r * Math.cos(angle),
+    y: cy + r * Math.sin(angle),
+  };
+}
+
+function describeArc(cx, cy, rOuter, rInner, startAngle, endAngle) {
+  const startOuter = polarToCartesian(cx, cy, rOuter, endAngle);
+  const endOuter = polarToCartesian(cx, cy, rOuter, startAngle);
+  const startInner = polarToCartesian(cx, cy, rInner, startAngle);
+  const endInner = polarToCartesian(cx, cy, rInner, endAngle);
+  const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+  return [
+    `M ${startOuter.x} ${startOuter.y}`,
+    `A ${rOuter} ${rOuter} 0 ${largeArcFlag} 0 ${endOuter.x} ${endOuter.y}`,
+    `L ${startInner.x} ${startInner.y}`,
+    `A ${rInner} ${rInner} 0 ${largeArcFlag} 1 ${endInner.x} ${endInner.y}`,
+    'Z',
+  ].join(' ');
+}
+
+function renderFileTypeChart(data) {
+  const chart = document.getElementById('filetype-chart');
+  const layout = document.getElementById('filetype-layout');
+  const empty = document.getElementById('filetype-empty');
+  const legend = document.getElementById('filetype-legend');
+  const total = document.getElementById('filetype-chart-total');
+  if (!chart || !layout || !empty || !legend || !total) return;
+
+  const items = Array.isArray(data) ? data.filter((item) => Number(item?.count || 0) > 0) : [];
+  chart.innerHTML = '';
+  if (!items.length) {
+    layout.style.display = 'none';
+    empty.style.display = '';
+    legend.innerHTML = '';
+    total.textContent = '0';
+    return;
+  }
+
+  const totalFiles = items.reduce((sum, item) => sum + Number(item.count || 0), 0);
+  if (!totalFiles) return;
+
+  layout.style.display = '';
+  empty.style.display = 'none';
+  total.textContent = totalFiles.toLocaleString();
+  legend.innerHTML = items.map((item, index) => `
+    <div class="filetype-legend-row">
+      <div class="row" style="gap:0.625rem; min-width:0;">
+        <span class="filetype-swatch" style="background:${FILETYPE_COLORS[index % FILETYPE_COLORS.length]}"></span>
+        <span class="filetype-label">${item.label}</span>
+      </div>
+      <div class="filetype-meta">
+        <span class="filetype-count">${Number(item.count || 0).toLocaleString()}</span>
+        <span class="filetype-percent">${item.percent}%</span>
+      </div>
+    </div>`).join('');
+
+  let startAngle = 0;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const angle = (Number(item.count || 0) / totalFiles) * 360;
+    const endAngle = startAngle + angle;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', describeArc(120, 120, 108, 68, startAngle, endAngle));
+    path.setAttribute('fill', FILETYPE_COLORS[index % FILETYPE_COLORS.length]);
+    path.setAttribute('stroke', '#08101f');
+    path.setAttribute('stroke-width', '2');
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = `${item.label}: ${item.count} files (${item.percent}%)`;
+    path.appendChild(title);
+    chart.appendChild(path);
+    startAngle = endAngle;
+  }
+}
+
+function renderSetupDiagnostics(setup) {
+  const scanRoots = document.getElementById('setup-scan-roots-list');
+  const warnings = document.getElementById('setup-warnings');
+  if (!scanRoots || !warnings || !setup) return;
+
+  const roots = Array.isArray(setup.scan_roots) ? setup.scan_roots : [];
+  if (!roots.length) {
+    scanRoots.innerHTML = '<div class="text-3" style="font-size:0.8125rem; padding:0.5rem 0;">No scan roots configured yet.</div>';
+  } else {
+    scanRoots.innerHTML = roots.map((root) => {
+      const allOk = Boolean(root.exists && root.is_dir && root.readable);
+      const iconClass = allOk ? 'ok' : root.exists ? 'warn' : 'error';
+      const icon = allOk ? '✓' : root.exists ? '!' : '✗';
+      let badgeClass = 'badge-green';
+      let badgeText = 'accessible';
+      if (!root.exists) {
+        badgeClass = 'badge-red';
+        badgeText = 'not found';
+      } else if (!root.is_dir) {
+        badgeClass = 'badge-amber';
+        badgeText = 'not a directory';
+      } else if (!root.readable) {
+        badgeClass = 'badge-amber';
+        badgeText = 'not readable';
+      }
+      return `
+        <div class="diag-row">
+          <div class="diag-icon ${iconClass}">${icon}</div>
+          <div>
+            <div class="diag-name mono" style="font-size:0.8125rem;">${root.path}</div>
+            <div class="row" style="gap:0.5rem; margin-top:3px;">
+              <span class="badge ${badgeClass}">${badgeText}</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  const warningList = Array.isArray(setup.warnings) ? setup.warnings : [];
+  if (!warningList.length) {
+    warnings.style.display = 'none';
+    warnings.innerHTML = '';
+    return;
+  }
+
+  const warningItems = warningList.map((warning) => `<li>${warning}</li>`).join('');
+  warnings.innerHTML = `
+    <div class="alert alert-amber">
+      <span style="flex-shrink:0;">⚠</span>
+      <div>
+        <strong>${warningList.length} warning${warningList.length === 1 ? '' : 's'} detected</strong>
+        <ul class="alert-list">${warningItems}</ul>
+      </div>
+    </div>`;
+  warnings.style.display = '';
+}
+
 function initScheduleField() {
   const input = document.getElementById('schedule-input');
   const preset = document.getElementById('schedule-preset');
@@ -370,8 +506,8 @@ async function refreshDashboard() {
     const crEl  = document.getElementById('count-corrupt');
     const urEl  = document.getElementById('count-unreadable');
     const dot   = document.getElementById('status-dot');
-    const bannerState = document.getElementById('banner-state');
-    const bannerDetail = document.getElementById('banner-detail');
+     const bannerState = document.getElementById('banner-state');
+     const bannerDetail = document.getElementById('banner-detail');
 
     if (rtEl) rtEl.textContent = status.status;
     if (fiEl) fiEl.textContent = (status.files_indexed ?? 0).toLocaleString();
@@ -392,11 +528,12 @@ async function refreshDashboard() {
     else if (s === 'degraded' || s === 'error')           setDotClass(dot, 'dot-amber');
     else                                                  setDotClass(dot, 'dot-gray');
 
-    const banner = dashboardBanner(status);
-    if (bannerState) bannerState.textContent = banner.state;
-    if (bannerDetail) bannerDetail.textContent = banner.detail;
-    updateSchedulerCard(status.scheduler);
-  }
+     const banner = dashboardBanner(status);
+     if (bannerState) bannerState.textContent = banner.state;
+     if (bannerDetail) bannerDetail.textContent = banner.detail;
+     renderFileTypeChart(status.file_types);
+     updateSchedulerCard(status.scheduler);
+   }
 
   if (scanState) {
     updateScanSection(scanState.current, scanState.last);
@@ -499,6 +636,11 @@ async function submitSettingsForm(event) {
     : 'Saved successfully.';
   if (feedback) { feedback.textContent = msg; feedback.className = 'form-feedback ok'; }
   toast(msg, 'success');
+
+  if (form.id === 'setup-form') {
+    const setup = await fetchJson('/api/setup');
+    if (setup) renderSetupDiagnostics(setup);
+  }
 }
 
 // ── Issue filters ─────────────────────────────────────────────
@@ -544,6 +686,14 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(refreshTimestamps, 30000);
 
   initScheduleField();
+  const initialChart = document.getElementById('filetype-chart');
+  if (initialChart?.dataset.fileTypes) {
+    try {
+      renderFileTypeChart(JSON.parse(initialChart.dataset.fileTypes));
+    } catch {
+      renderFileTypeChart([]);
+    }
+  }
   refreshDashboard();
   setInterval(refreshDashboard, 5000);
 

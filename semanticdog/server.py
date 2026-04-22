@@ -139,6 +139,38 @@ def _dashboard_banner(status_payload: dict[str, Any], setup: dict[str, Any], run
     }
 
 
+def _file_type_breakdown(db: "Database | None", limit: int = 6) -> list[dict[str, Any]]:
+    if db is None:
+        return []
+
+    counts = db.get_format_counts()
+    if not counts:
+        return []
+
+    top_counts = counts[:limit]
+    other_total = sum(count for _, count in counts[limit:])
+    if other_total > 0:
+        top_counts.append(("other", other_total))
+
+    total = sum(count for _, count in top_counts)
+    payload = []
+    for ext, count in top_counts:
+        if ext == "(no ext)":
+            label = "No ext"
+        elif ext == "other":
+            label = "Other"
+        else:
+            label = ext[1:].upper() if ext.startswith(".") else ext.upper()
+        payload.append(
+            {
+                "label": label,
+                "count": int(count),
+                "percent": round((count / total * 100), 1) if total else 0.0,
+            }
+        )
+    return payload
+
+
 def _changed_restart_fields(payload: dict[str, Any], current_cfg: "Config | None") -> set[str]:
     if current_cfg is None:
         return set(payload) & RESTART_REQUIRED_CONFIG_FIELDS
@@ -388,6 +420,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
                 "files_indexed": stats.get("total", 0),
                 "by_status": stats.get("by_status", {}),
                 "last_scan": last_scan,
+                "file_types": _file_type_breakdown(db),
                 "current_scan": None if current_scan is None else current_scan.__dict__,
                 "scheduler": None if scheduler is None else scheduler.as_dict(),
             }
