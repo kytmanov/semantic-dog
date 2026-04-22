@@ -40,8 +40,48 @@ For NAS installs, pin an exact release tag instead of floating on `latest`.
 docker pull ghcr.io/kytmanov/semantic-dog:0.3.1
 ```
 
-### Docker Compose
+### Docker Compose (Host Paths)
 
+```yaml
+services:
+  semanticdog:
+    image: ghcr.io/kytmanov/semantic-dog:0.3.1
+    container_name: semanticdog
+    restart: unless-stopped
+    # Replace 1000 with your NAS user's UID
+    user: "1000"
+    ports:
+      - "8181:8181"
+    environment:
+      # Replace with your timezone (e.g., America/Los_Angeles, Europe/London)
+      TZ: America/Your_Timezone
+    volumes:
+      # App data - persists config and scan database across updates
+      - /path/to/semanticdog/config:/data/config
+      - /path/to/semanticdog/state:/data/state
+      # Your media library - replace with your actual paths
+      - /path/to/your/photos:/Photos:ro
+```
+
+**Setup:**
+```bash
+# 1. Create directories (replace 1000 with your UID)
+mkdir -p /path/to/semanticdog/config /path/to/semanticdog/state
+chown -R 1000 /path/to/semanticdog/config /path/to/semanticdog/state
+
+# 2. Start the container
+docker compose -f compose.yaml up -d
+
+# 3. Open Web UI
+#    http://<your-nas>:8181
+
+# 4. In the Web UI:
+#    - Add scan root: /Photos
+#    - Set schedule (e.g., "0 2 * * *" for daily at 2am)
+#    - Click Save
+```
+
+Named volumes version (easier, no permission management):
 ```yaml
 services:
   semanticdog:
@@ -51,18 +91,15 @@ services:
     ports:
       - "8181:8181"
     environment:
-      TZ: Europe/Berlin
+      TZ: America/Your_Timezone
     volumes:
-      - semanticdog-config:/data/config
-      - semanticdog-state:/data/state
-      - semanticdog-logs:/data/logs
-      - /volume1/photos:/library/photos:ro
-      - /volume1/documents:/library/documents:ro
+      - sdog-config:/data/config
+      - sdog-state:/data/state
+      - /path/to/your/photos:/Photos:ro
 
 volumes:
-  semanticdog-config:
-  semanticdog-state:
-  semanticdog-logs:
+  sdog-config:
+  sdog-state:
 ```
 
 ### Docker Run

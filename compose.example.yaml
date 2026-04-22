@@ -1,22 +1,39 @@
+# SemanticDog Docker Compose Example
+# https://github.com/kytmanov/semantic-dog
+#
+# Quick start:
+#   1. Replace /path/to/semanticdog/* with your actual paths
+#   2. Replace 1000 with your NAS user's UID (find with: id -u)
+#   3. Replace America/Your_Timezone with your timezone
+#   4. Replace /path/to/your/photos with your actual photo path
+#   5. docker compose up -d
+#   6. Open http://localhost:8181
+
 services:
   semanticdog:
     image: ghcr.io/kytmanov/semantic-dog:latest
     container_name: semanticdog
     restart: unless-stopped
-    # Uncomment and adjust if your NAS bind mounts require a specific uid:gid.
-    # user: "1000:1000"
+    # Replace 1000 with your NAS user's UID (e.g., 1000, 568, etc.)
+    user: "1000"
     ports:
       - "8181:8181"
     environment:
-      TZ: Europe/Berlin
+      # Replace with your timezone (e.g., America/Los_Angeles, Europe/London)
+      TZ: America/Your_Timezone
     volumes:
-      - semanticdog-config:/data/config
-      - semanticdog-state:/data/state
-      - semanticdog-logs:/data/logs
-      - /volume1/photos:/library/photos:ro
-      - /volume1/documents:/library/documents:ro
+      # App data - persists config and scan database across updates
+      # Create these directories first and set ownership:
+      #   mkdir -p /path/to/semanticdog/config /path/to/semanticdog/state
+      #   chown -R 1000 /path/to/semanticdog/config /path/to/semanticdog/state
+      - /path/to/semanticdog/config:/data/config
+      - /path/to/semanticdog/state:/data/state
+      # Your media library - replace with your actual photo path
+      - /path/to/your/photos:/Photos:ro
 
-volumes:
-  semanticdog-config:
-  semanticdog-state:
-  semanticdog-logs:
+# Named volumes alternative (easier, no permission management):
+# - Rename this file to compose.yaml and use: docker compose up -d
+# - Named volumes are easier but data is harder to back up manually.
+# volumes:
+#   sdog-config:
+#   sdog-state:
