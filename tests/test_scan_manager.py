@@ -181,3 +181,50 @@ class TestScanManager:
         manager.shutdown()
 
         assert manager._executor is original
+
+    def test_exception_overwrites_existing_origin_summary(self, cfg, db):
+        manager = ScanManager(cfg, db)
+        manager._active_origin = "scheduled"
+        manager._last_run_summaries["scheduled"] = {
+            "state": "completed",
+            "scan_id": "scan-old",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "finished_at": "2026-01-01T00:00:10+00:00",
+            "processed": 10,
+            "issues": 0,
+            "last_error": None,
+        }
+        manager._last_snapshot = ScanProgressSnapshot(
+            state="failed",
+            scan_id="scan-new",
+            scope=None,
+            discovered_total=10,
+            processed=4,
+            skipped=0,
+            ok=2,
+            corrupt=1,
+            unreadable=1,
+            unsupported=0,
+            error=1,
+            files_per_sec=0.0,
+            eta_s=None,
+            started_at="2026-01-02T00:00:00+00:00",
+            finished_at="2026-01-02T00:00:03+00:00",
+            last_error="boom",
+        )
+
+        with patch("semanticdog.services.scan_manager.Scanner") as scanner_cls:
+            scanner_cls.return_value.scan.side_effect = RuntimeError("boom")
+
+            with pytest.raises(RuntimeError, match="boom"):
+                manager._run_scan(scope=None, resume_scan_id=None, origin="scheduled")
+
+        assert manager.last_run_summary("scheduled") == {
+            "state": "failed",
+            "scan_id": "scan-new",
+            "started_at": "2026-01-02T00:00:00+00:00",
+            "finished_at": "2026-01-02T00:00:03+00:00",
+            "processed": 4,
+            "issues": 2,
+            "last_error": "boom",
+        }

@@ -158,7 +158,7 @@ def _file_type_breakdown(db: "Database | None", limit: int = 6) -> list[dict[str
         if ext == "(no ext)":
             label = "No ext"
         elif ext == "other":
-            label = "Other"
+            label = "Others"
         else:
             label = ext[1:].upper() if ext.startswith(".") else ext.upper()
         payload.append(

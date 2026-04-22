@@ -48,8 +48,9 @@ RUN apt-get update \
 RUN groupadd --system --gid 999 semanticdog \
     && useradd --system --uid 999 --gid 999 --create-home semanticdog
 
-# Prevent privilege escalation
-RUN echo 'semanticdog ALL=(ALL) NOPASSWD: !ALL' >> /etc/sudoers.d/semanticdog \
+# Prevent privilege escalation when sudo is present
+RUN mkdir -p /etc/sudoers.d \
+    && echo 'semanticdog ALL=(ALL) NOPASSWD: !ALL' > /etc/sudoers.d/semanticdog \
     && chmod 0440 /etc/sudoers.d/semanticdog
 
 WORKDIR /app

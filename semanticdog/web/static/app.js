@@ -181,6 +181,32 @@ function setHeroClass(state) {
   hero.classList.add(state);
 }
 
+function setNodeChildren(node, children) {
+  if (!node) return;
+  node.replaceChildren(...children.filter(Boolean));
+}
+
+function textNode(value) {
+  return document.createTextNode(String(value ?? ''));
+}
+
+function buildTimestampSpan({ id, value, attrName = 'data-time', className = '' }) {
+  const span = document.createElement('span');
+  if (id) span.id = id;
+  if (className) span.className = className;
+  if (value) span.setAttribute(attrName, value);
+  span.textContent = value || '';
+  return span;
+}
+
+function buildInlineMetric({ label, id, value, attrName, className = '' }) {
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(textNode(`${label}: `));
+  const span = buildTimestampSpan({ id, value, attrName, className });
+  fragment.appendChild(span);
+  return fragment;
+}
+
 function dashboardBanner(status) {
   const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
   if (status.status === 'scanning') {
@@ -319,7 +345,10 @@ function updateTimeline(status) {
     } else if (last.finished_at && issueCount > 0) {
       lastTitle.textContent = '1. Last scan completed with issues';
     } else if (last.finished_at) {
-      lastTitle.innerHTML = `1. Last Scan: <strong id="timeline-last-when" data-time="${last.started_at || ''}">${last.started_at || ''}</strong>`;
+      const strong = document.createElement('strong');
+      const when = buildTimestampSpan({ id: 'timeline-last-when', value: last.started_at || '', attrName: 'data-time' });
+      strong.appendChild(when);
+      setNodeChildren(lastTitle, [textNode('1. Last Scan: '), strong]);
     } else {
       lastTitle.textContent = '1. Last scan incomplete';
     }
@@ -329,7 +358,22 @@ function updateTimeline(status) {
     if (!last) {
       lastMeta.textContent = 'Run your first scan to establish a baseline.';
     } else if (last.finished_at) {
-      lastMeta.innerHTML = `Duration: <span id="timeline-last-duration" data-dur-start="${last.started_at || ''}" data-dur-end="${last.finished_at || ''}">${last.finished_at || ''}</span>. Scan Speed: <span id="timeline-last-rate">${last.files_per_sec ? `${Number(last.files_per_sec).toFixed(1)} f/s` : '—'}</span>`;
+      const duration = document.createElement('span');
+      duration.id = 'timeline-last-duration';
+      if (last.started_at) duration.dataset.durStart = last.started_at;
+      if (last.finished_at) duration.dataset.durEnd = last.finished_at;
+      duration.textContent = last.finished_at || '';
+
+      const rate = document.createElement('span');
+      rate.id = 'timeline-last-rate';
+      rate.textContent = last.files_per_sec ? `${Number(last.files_per_sec).toFixed(1)} f/s` : '—';
+
+      setNodeChildren(lastMeta, [
+        textNode('Duration: '),
+        duration,
+        textNode('. Scan Speed: '),
+        rate,
+      ]);
     } else {
       lastMeta.textContent = 'Scan started but did not finish cleanly.';
     }
@@ -545,7 +589,7 @@ function renderOverviewChart(data, filesIndexed = 0) {
   if (!items.length) {
     layout.style.display = 'none';
     empty.style.display = '';
-    legend.innerHTML = '';
+    legend.replaceChildren();
     total.textContent = Number(filesIndexed || 0).toLocaleString();
     if (totalText) totalText.textContent = Number(filesIndexed || 0).toLocaleString();
     if (emptyTitle) emptyTitle.textContent = 'No indexed files yet';
@@ -560,31 +604,60 @@ function renderOverviewChart(data, filesIndexed = 0) {
   empty.style.display = 'none';
   total.textContent = totalFiles.toLocaleString();
   if (totalText) totalText.textContent = totalFiles.toLocaleString();
-  legend.innerHTML = items.map((item) => {
+  legend.replaceChildren();
+  const legendFragment = document.createDocumentFragment();
+  items.forEach((item) => {
     const percent = totalFiles ? ((Number(item.count || 0) / totalFiles) * 100).toFixed(1) : '0.0';
-    const color = OVERVIEW_COLORS[item.tone] || OVERVIEW_COLORS.other;
-    const toneClass = `overview-tone-${item.tone || 'other'}`;
-    return `
-    <div class="filetype-legend-row overview-legend-row ${toneClass}">
-      <div class="row" style="gap:0.625rem; min-width:0;">
-        <span class="filetype-swatch overview-swatch ${toneClass}" style="background:${color}"></span>
-        <span class="filetype-label">${item.label}</span>
-      </div>
-      <div class="filetype-meta">
-        <span class="filetype-count">${Number(item.count || 0).toLocaleString()}</span>
-        <span class="filetype-percent">${percent}%</span>
-      </div>
-    </div>`;
-  }).join('');
+    const tone = Object.prototype.hasOwnProperty.call(OVERVIEW_COLORS, item?.tone) ? item.tone : 'other';
+    const color = OVERVIEW_COLORS[tone] || OVERVIEW_COLORS.other;
+    const toneClass = `overview-tone-${tone}`;
+
+    const row = document.createElement('div');
+    row.className = `filetype-legend-row overview-legend-row ${toneClass}`;
+
+    const rowInner = document.createElement('div');
+    rowInner.className = 'row';
+    rowInner.style.gap = '0.625rem';
+    rowInner.style.minWidth = '0';
+
+    const swatch = document.createElement('span');
+    swatch.className = `filetype-swatch overview-swatch ${toneClass}`;
+    swatch.style.background = color;
+
+    const label = document.createElement('span');
+    label.className = 'filetype-label';
+    label.textContent = String(item?.label ?? '');
+
+    const meta = document.createElement('div');
+    meta.className = 'filetype-meta';
+
+    const count = document.createElement('span');
+    count.className = 'filetype-count';
+    count.textContent = Number(item?.count || 0).toLocaleString();
+
+    const percentEl = document.createElement('span');
+    percentEl.className = 'filetype-percent';
+    percentEl.textContent = `${percent}%`;
+
+    rowInner.appendChild(swatch);
+    rowInner.appendChild(label);
+    meta.appendChild(count);
+    meta.appendChild(percentEl);
+    row.appendChild(rowInner);
+    row.appendChild(meta);
+    legendFragment.appendChild(row);
+  });
+  legend.appendChild(legendFragment);
 
   let startAngle = 0;
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
+    const tone = Object.prototype.hasOwnProperty.call(OVERVIEW_COLORS, item?.tone) ? item.tone : 'other';
     const angle = (Number(item.count || 0) / totalFiles) * 360;
     const endAngle = startAngle + angle;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', describeArc(120, 120, 108, 68, startAngle, endAngle));
-    path.setAttribute('fill', OVERVIEW_COLORS[item.tone] || OVERVIEW_COLORS.other);
+    path.setAttribute('fill', OVERVIEW_COLORS[tone] || OVERVIEW_COLORS.other);
     path.setAttribute('stroke', '#08101f');
     path.setAttribute('stroke-width', '2');
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
@@ -602,10 +675,17 @@ function renderSetupDiagnostics(setup) {
   if (!scanRoots || !warnings || !setup) return;
 
   const roots = Array.isArray(setup.scan_roots) ? setup.scan_roots : [];
+  scanRoots.replaceChildren();
   if (!roots.length) {
-    scanRoots.innerHTML = '<div class="text-3" style="font-size:0.8125rem; padding:0.5rem 0;">No scan roots configured yet.</div>';
+    const empty = document.createElement('div');
+    empty.className = 'text-3';
+    empty.style.fontSize = '0.8125rem';
+    empty.style.padding = '0.5rem 0';
+    empty.textContent = 'No scan roots configured yet.';
+    scanRoots.appendChild(empty);
   } else {
-    scanRoots.innerHTML = roots.map((root) => {
+    const rootsFragment = document.createDocumentFragment();
+    roots.forEach((root) => {
       const allOk = Boolean(root.exists && root.is_dir && root.readable);
       const iconClass = allOk ? 'ok' : root.exists ? 'warn' : 'error';
       const icon = allOk ? '✓' : root.exists ? '!' : '✗';
@@ -621,35 +701,71 @@ function renderSetupDiagnostics(setup) {
         badgeClass = 'badge-amber';
         badgeText = 'not readable';
       }
-      return `
-        <div class="diag-row">
-          <div class="diag-icon ${iconClass}">${icon}</div>
-          <div>
-            <div class="diag-name mono" style="font-size:0.8125rem;">${root.path}</div>
-            <div class="row" style="gap:0.5rem; margin-top:3px;">
-              <span class="badge ${badgeClass}">${badgeText}</span>
-            </div>
-          </div>
-        </div>`;
-    }).join('');
+      const row = document.createElement('div');
+      row.className = 'diag-row';
+
+      const iconEl = document.createElement('div');
+      iconEl.className = `diag-icon ${iconClass}`;
+      iconEl.textContent = icon;
+
+      const content = document.createElement('div');
+
+      const name = document.createElement('div');
+      name.className = 'diag-name mono';
+      name.style.fontSize = '0.8125rem';
+      name.textContent = String(root.path || '');
+
+      const badgeRow = document.createElement('div');
+      badgeRow.className = 'row';
+      badgeRow.style.gap = '0.5rem';
+      badgeRow.style.marginTop = '3px';
+
+      const badge = document.createElement('span');
+      badge.className = `badge ${badgeClass}`;
+      badge.textContent = badgeText;
+
+      badgeRow.appendChild(badge);
+      content.appendChild(name);
+      content.appendChild(badgeRow);
+      row.appendChild(iconEl);
+      row.appendChild(content);
+      rootsFragment.appendChild(row);
+    });
+    scanRoots.appendChild(rootsFragment);
   }
 
   const warningList = Array.isArray(setup.warnings) ? setup.warnings : [];
   if (!warningList.length) {
     warnings.style.display = 'none';
-    warnings.innerHTML = '';
+    warnings.replaceChildren();
     return;
   }
 
-  const warningItems = warningList.map((warning) => `<li>${warning}</li>`).join('');
-  warnings.innerHTML = `
-    <div class="alert alert-amber">
-      <span style="flex-shrink:0;">⚠</span>
-      <div>
-        <strong>${warningList.length} warning${warningList.length === 1 ? '' : 's'} detected</strong>
-        <ul class="alert-list">${warningItems}</ul>
-      </div>
-    </div>`;
+  warnings.replaceChildren();
+  const alert = document.createElement('div');
+  alert.className = 'alert alert-amber';
+
+  const icon = document.createElement('span');
+  icon.style.flexShrink = '0';
+  icon.textContent = '⚠';
+
+  const content = document.createElement('div');
+  const summary = document.createElement('strong');
+  summary.textContent = `${warningList.length} warning${warningList.length === 1 ? '' : 's'} detected`;
+
+  const list = document.createElement('ul');
+  list.className = 'alert-list';
+  warningList.forEach((warning) => {
+    const item = document.createElement('li');
+    item.textContent = String(warning);
+    list.appendChild(item);
+  });
+
+  content.appendChild(summary);
+  content.appendChild(list);
+  alert.appendChild(icon);
+  alert.appendChild(content);
+  warnings.appendChild(alert);
   warnings.style.display = '';
 }
 

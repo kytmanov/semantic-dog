@@ -121,7 +121,7 @@ class ScanManager:
             with self._lock:
                 self._last_error = str(e)
                 snapshot = self._last_snapshot
-                if self._active_origin == origin and origin not in self._last_run_summaries:
+                if self._active_origin == origin:
                     self._last_run_summaries[origin] = {
                         "state": "failed",
                         "scan_id": snapshot.scan_id if snapshot else None,
