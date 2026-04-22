@@ -41,7 +41,10 @@ class TestWebUi:
         assert "Dashboard" in r.text
         assert "SemanticDog" in r.text
         assert "Run Scan" in r.text
-        assert "count-ok" in r.text
+        assert 'id="dashboard-hero"' in r.text
+        assert 'id="dashboard-shell"' in r.text
+        assert 'id="dashboard-timeline-card"' in r.text
+        assert 'id="dashboard-overview-card"' in r.text
 
     async def test_setup_page_renders(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
@@ -143,8 +146,10 @@ class TestWebUi:
         assert r.status_code == 200
         assert "Ready to scan" in r.text
         assert "Next scan" in r.text
+        assert "SemanticDog is ready to scan your library." in r.text
+        assert "No indexed files yet" in r.text
 
-    async def test_dashboard_renders_scheduler_card_details(self, tmp_path):
+    async def test_dashboard_renders_timeline_details(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
         app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path)))
 
@@ -152,7 +157,8 @@ class TestWebUi:
             r = await c.get("/dashboard")
 
         assert r.status_code == 200
-        assert 'id="scheduler-card"' in r.text
+        assert 'id="timeline-last-scan"' in r.text
+        assert 'id="timeline-next-scan"' in r.text
         assert 'id="scheduler-badge"' in r.text
         assert 'id="next-scan-relative"' in r.text
         assert 'id="scheduler-last-run"' in r.text
@@ -161,6 +167,44 @@ class TestWebUi:
         assert "0 2 * * *" in r.text
         assert "No runs yet" in r.text
         assert "Never" in r.text
+
+    async def test_dashboard_renders_overview_chart(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        db = Database(cfg.db_path)
+        scan_id = db.create_scan(scope=str(tmp_path))
+        db.record(str(tmp_path / "img.jpg"), 1.0, 100, "ok", scan_id=scan_id)
+        db.record(str(tmp_path / "clip.mp4"), 1.0, 100, "ok", scan_id=scan_id)
+        db.finish_scan(scan_id, total=2, corrupt=0, unreadable=0, files_per_sec=1.0)
+        app = create_app(AppRuntime(cfg=cfg, db=db))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert 'id="overview-chart"' in r.text
+        assert "Library Health &amp; File Overview" in r.text
+        assert "Healthy JPG" in r.text
+        assert "Healthy MP4" in r.text
+
+    async def test_dashboard_renders_warning_hero_and_issue_pills(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
+        db = Database(cfg.db_path)
+        scan_id = db.create_scan(scope=str(tmp_path))
+        db.record(str(tmp_path / "good.jpg"), 1.0, 100, "ok", scan_id=scan_id)
+        db.record(str(tmp_path / "bad.jpg"), 1.0, 100, "corrupt", scan_id=scan_id)
+        db.record(str(tmp_path / "locked.jpg"), 1.0, 100, "unreadable", scan_id=scan_id)
+        db.finish_scan(scan_id, total=3, corrupt=1, unreadable=1, files_per_sec=1.0)
+        app = create_app(AppRuntime(cfg=cfg, db=db))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/dashboard")
+
+        assert r.status_code == 200
+        assert "Library Health Warning: Data Compromised." in r.text
+        assert "Corrupt JPG" in r.text
+        assert "Unreadable JPG" in r.text
+        assert 'id="overview-corrupt-pill"' in r.text
+        assert 'id="overview-unreadable-pill"' in r.text
 
     async def test_dashboard_shows_scheduler_error_for_invalid_cron(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), schedule="not-a-cron")
@@ -186,7 +230,8 @@ class TestWebUi:
             r = await c.get("/dashboard")
 
         assert r.status_code == 200
-        assert "Healthy" in r.text
+        assert "All clear. Your library is healthy." in r.text
+        assert "Last scan completed without issues" in r.text
 
     async def test_static_assets_are_served(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
@@ -197,4 +242,4 @@ class TestWebUi:
 
         assert r.status_code == 200
         assert "progress-fill" in r.text
-        assert "scheduler-card" in r.text
+        assert "dashboard-hero" in r.text

@@ -35,19 +35,38 @@ def test_scheduler_triggers_scan_manager(tmp_path):
     cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), schedule="* * * * *")
     db = Database(cfg.db_path)
     manager = ScanManager(cfg, db)
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
-    def fake_start(scope=None):
-        calls.append(scope or "all")
+    def fake_start(scope=None, *, origin="manual"):
+        calls.append((scope or "all", origin))
         return type("StartResult", (), {"accepted": True})()
 
     manager.start = fake_start
     scheduler = SchedulerService(cfg, manager)
     scheduler.debug_force_run()
 
-    assert calls == ["all"]
+    assert calls == [("all", "scheduled")]
     assert scheduler.state().last_trigger_result == "started"
     assert scheduler.state().last_run_at is not None
+
+
+def test_scheduler_reports_completed_scheduled_run(tmp_path):
+    cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), schedule="* * * * *")
+    db = Database(cfg.db_path)
+    manager = ScanManager(cfg, db)
+    scheduler = SchedulerService(cfg, manager)
+
+    manager._last_run_summaries["scheduled"] = {
+        "state": "completed",
+        "scan_id": "scan-1",
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:04+00:00",
+        "processed": 12,
+        "issues": 0,
+        "last_error": None,
+    }
+
+    assert scheduler.as_dict()["last_trigger_result"] == "completed"
 
 
 def test_scheduler_updates_next_run_when_config_changes(tmp_path):

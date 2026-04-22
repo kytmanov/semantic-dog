@@ -141,6 +141,8 @@ function refreshTimestamps() {
 let _fastTimer   = null;
 let _fastUntil   = 0;
 let _scanPending = false; // optimistic: show progress until first confirmed state
+let _dashboardRefreshSeq = 0;
+let _terminalRefreshScheduled = false;
 
 function startFastPoll() {
   _fastUntil = Date.now() + 45000; // 45s window
@@ -156,11 +158,53 @@ function stopFastPoll() {
   _scanPending = false;
 }
 
+function scheduleTerminalDashboardRefresh() {
+  if (_terminalRefreshScheduled) return;
+  _terminalRefreshScheduled = true;
+  setTimeout(() => {
+    _terminalRefreshScheduled = false;
+    refreshDashboard();
+  }, 150);
+}
+
 // ── Dashboard ─────────────────────────────────────────────────
 
 function setDotClass(dot, cls) {
   if (!dot) return;
   dot.className = 'status-dot ' + cls;
+}
+
+function setHeroClass(state) {
+  const hero = document.getElementById('dashboard-hero');
+  if (!hero) return;
+  hero.classList.remove('is-healthy', 'is-warning', 'is-running', 'is-ready', 'is-degraded');
+  hero.classList.add(state);
+}
+
+function setNodeChildren(node, children) {
+  if (!node) return;
+  node.replaceChildren(...children.filter(Boolean));
+}
+
+function textNode(value) {
+  return document.createTextNode(String(value ?? ''));
+}
+
+function buildTimestampSpan({ id, value, attrName = 'data-time', className = '' }) {
+  const span = document.createElement('span');
+  if (id) span.id = id;
+  if (className) span.className = className;
+  if (value) span.setAttribute(attrName, value);
+  span.textContent = value || '';
+  return span;
+}
+
+function buildInlineMetric({ label, id, value, attrName, className = '' }) {
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(textNode(`${label}: `));
+  const span = buildTimestampSpan({ id, value, attrName, className });
+  fragment.appendChild(span);
+  return fragment;
 }
 
 function dashboardBanner(status) {
@@ -195,6 +239,167 @@ function dashboardBanner(status) {
   };
 }
 
+function dashboardHeroCopy(status) {
+  const banner = dashboardBanner(status);
+  const lastScan = status.last_scan;
+  const corrupt = status.by_status?.corrupt ?? 0;
+  const unreadable = status.by_status?.unreadable ?? 0;
+
+  if (banner.state === 'Healthy') {
+    return {
+      heroClass: 'is-healthy',
+      title: 'All clear. Your library is healthy.',
+      detail: lastScan?.scope
+        ? `Last scan completed without issues for ${lastScan.scope}.`
+        : 'No current corruption or access issues are recorded in the indexed library.',
+    };
+  }
+
+  if (banner.state === 'Issues found') {
+    return {
+      heroClass: 'is-warning',
+      title: 'Library Health Warning: Data Compromised.',
+      detail: `${corrupt} files are corrupted. ${unreadable} files are unreadable. View details below.`,
+    };
+  }
+
+  if (banner.state === 'Scan running') {
+    return {
+      heroClass: 'is-running',
+      title: 'Scan in progress. SemanticDog is checking your library.',
+      detail: 'Live progress appears below while files are being validated.',
+    };
+  }
+
+  if (banner.state === 'Configuration needed') {
+    return {
+      heroClass: 'is-degraded',
+      title: 'Configuration attention needed before trusting results.',
+      detail: banner.detail,
+    };
+  }
+
+  if (banner.state === 'Access problem suspected') {
+    return {
+      heroClass: 'is-degraded',
+      title: 'Library access warning. Scan roots may be unavailable.',
+      detail: banner.detail,
+    };
+  }
+
+  return {
+    heroClass: 'is-ready',
+    title: 'SemanticDog is ready to scan your library.',
+    detail: banner.detail,
+  };
+}
+
+function updateHero(status) {
+  const dot = document.getElementById('status-dot');
+  const stateEl = document.getElementById('banner-state');
+  const titleEl = document.getElementById('dashboard-hero-title');
+  const detailEl = document.getElementById('banner-detail');
+  const filesEl = document.getElementById('files-indexed');
+  const runtimeEl = document.getElementById('runtime-status');
+  const copy = dashboardHeroCopy(status);
+  const banner = dashboardBanner(status);
+  const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
+
+  if (runtimeEl) runtimeEl.textContent = status.status;
+  if (filesEl) filesEl.textContent = (status.files_indexed ?? 0).toLocaleString();
+  if (stateEl) stateEl.textContent = banner.state;
+  if (titleEl) titleEl.textContent = copy.title;
+  if (detailEl) detailEl.textContent = copy.detail;
+  setHeroClass(copy.heroClass);
+
+  if (status.status === 'scanning') setDotClass(dot, 'dot-blue');
+  else if (hasBad) setDotClass(dot, 'dot-red');
+  else if (status.status === 'idle' && (status.files_indexed ?? 0) > 0) setDotClass(dot, 'dot-green');
+  else if (status.status === 'degraded' || status.status === 'error') setDotClass(dot, 'dot-amber');
+  else setDotClass(dot, 'dot-gray');
+}
+
+function updateTimeline(status) {
+  const last = status.last_scan;
+  const corrupt = status.by_status?.corrupt ?? 0;
+  const unreadable = status.by_status?.unreadable ?? 0;
+  const issueCount = corrupt + unreadable;
+
+  const lastDot = document.getElementById('timeline-last-dot');
+  const lastTitle = document.getElementById('timeline-last-title');
+  const lastMeta = document.getElementById('timeline-last-meta');
+  const lastSubmeta = document.getElementById('timeline-last-submeta');
+  const lastScope = document.getElementById('timeline-last-scope');
+  const lastFiles = document.getElementById('last-scan-files-checked');
+
+  if (lastDot) {
+    lastDot.classList.remove('is-success', 'is-danger', 'is-info', 'is-muted');
+    if (!last) lastDot.classList.add('is-muted');
+    else if (issueCount > 0) lastDot.classList.add('is-danger');
+    else lastDot.classList.add('is-success');
+  }
+
+  if (lastTitle) {
+    if (!last) {
+      lastTitle.textContent = '1. No scans yet';
+    } else if (last.finished_at && issueCount > 0) {
+      lastTitle.textContent = '1. Last scan completed with issues';
+    } else if (last.finished_at) {
+      const strong = document.createElement('strong');
+      const when = buildTimestampSpan({ id: 'timeline-last-when', value: last.started_at || '', attrName: 'data-time' });
+      strong.appendChild(when);
+      setNodeChildren(lastTitle, [textNode('1. Last Scan: '), strong]);
+    } else {
+      lastTitle.textContent = '1. Last scan incomplete';
+    }
+  }
+
+  if (lastMeta) {
+    if (!last) {
+      lastMeta.textContent = 'Run your first scan to establish a baseline.';
+    } else if (last.finished_at) {
+      const duration = document.createElement('span');
+      duration.id = 'timeline-last-duration';
+      if (last.started_at) duration.dataset.durStart = last.started_at;
+      if (last.finished_at) duration.dataset.durEnd = last.finished_at;
+      duration.textContent = last.finished_at || '';
+
+      const rate = document.createElement('span');
+      rate.id = 'timeline-last-rate';
+      rate.textContent = last.files_per_sec ? `${Number(last.files_per_sec).toFixed(1)} f/s` : '—';
+
+      setNodeChildren(lastMeta, [
+        textNode('Duration: '),
+        duration,
+        textNode('. Scan Speed: '),
+        rate,
+      ]);
+    } else {
+      lastMeta.textContent = 'Scan started but did not finish cleanly.';
+    }
+  }
+
+  if (lastSubmeta) lastSubmeta.style.display = last ? '' : 'none';
+  if (lastScope) lastScope.textContent = last?.scope || 'all configured paths';
+  if (lastFiles) lastFiles.textContent = Number(last?.total || 0).toLocaleString();
+
+  updateSchedulerCard(status.scheduler);
+}
+
+function updateIssuePills(status) {
+  const corrupt = status.by_status?.corrupt ?? 0;
+  const unreadable = status.by_status?.unreadable ?? 0;
+  const corruptPill = document.getElementById('overview-corrupt-pill');
+  const unreadablePill = document.getElementById('overview-unreadable-pill');
+  const corruptCount = document.getElementById('count-corrupt');
+  const unreadableCount = document.getElementById('count-unreadable');
+
+  if (corruptCount) corruptCount.textContent = Number(corrupt).toLocaleString();
+  if (unreadableCount) unreadableCount.textContent = Number(unreadable).toLocaleString();
+  if (corruptPill) corruptPill.classList.toggle('is-active', corrupt > 0);
+  if (unreadablePill) unreadablePill.classList.toggle('is-active', unreadable > 0);
+}
+
 function updateScanSection(current, last) {
   const progressSection = document.getElementById('scan-progress-section');
   const idleSection     = document.getElementById('scan-idle-section');
@@ -202,6 +407,8 @@ function updateScanSection(current, last) {
   if (!progressSection) return;
 
   const scanning = current && ['starting', 'running'].includes(current.state);
+  const terminalLast = !scanning && last && ['completed', 'failed', 'interrupted'].includes(last.state);
+  if (terminalLast) _scanPending = false;
   // Show progress while actively scanning OR briefly while optimistic pending
   const showProgress = scanning || _scanPending;
 
@@ -229,6 +436,7 @@ function updateScanSection(current, last) {
   }
 
   if (scanning) {
+    _terminalRefreshScheduled = false;
     _scanPending = false; // got real data — no longer optimistic
     if (fill) fill.classList.remove('indeterminate');
 
@@ -247,6 +455,9 @@ function updateScanSection(current, last) {
       `${(current.processed || 0).toLocaleString()} / ${(current.discovered_total || 0).toLocaleString()}`;
     if (rate)  rate.textContent  = `${Number(current.files_per_sec || 0).toFixed(1)} files/sec`;
     if (eta)   eta.textContent   = fmtEta(current.eta_s);
+  } else if (terminalLast) {
+    scheduleTerminalDashboardRefresh();
+    if (_fastTimer) _fastUntil = Math.max(_fastUntil, Date.now() + 1200);
   } else if (!showProgress) {
     // Scan finished — extend fast poll a bit to let the next status poll refresh counts,
     // then stop it so we fall back to the slow 5s interval.
@@ -271,9 +482,17 @@ function updateSchedulerCard(scheduler) {
   const schedulerLastResult = document.getElementById('scheduler-last-result');
   const schedulerCron = document.getElementById('scheduler-cron');
   const schedulerError = document.getElementById('scheduler-error');
+  const nextDot = document.getElementById('timeline-next-dot');
 
   const enabled = Boolean(scheduler?.enabled);
   const hasError = Boolean(scheduler?.last_error);
+
+  if (nextDot) {
+    nextDot.classList.remove('is-success', 'is-danger', 'is-info', 'is-muted');
+    if (hasError) nextDot.classList.add('is-danger');
+    else if (enabled) nextDot.classList.add('is-info');
+    else nextDot.classList.add('is-muted');
+  }
 
   if (nextScanInfo) {
     if (hasError) nextScanInfo.textContent = 'Schedule unavailable';
@@ -324,6 +543,232 @@ function updateSchedulerCard(scheduler) {
   }
 }
 
+const OVERVIEW_COLORS = {
+  healthy: '#4f8ef7',
+  corrupt: '#f8b84a',
+  unreadable: '#f06b6b',
+  other: '#94a3b8',
+};
+
+function polarToCartesian(cx, cy, r, angleDeg) {
+  const angle = ((angleDeg - 90) * Math.PI) / 180;
+  return {
+    x: cx + r * Math.cos(angle),
+    y: cy + r * Math.sin(angle),
+  };
+}
+
+function describeArc(cx, cy, rOuter, rInner, startAngle, endAngle) {
+  const startOuter = polarToCartesian(cx, cy, rOuter, endAngle);
+  const endOuter = polarToCartesian(cx, cy, rOuter, startAngle);
+  const startInner = polarToCartesian(cx, cy, rInner, startAngle);
+  const endInner = polarToCartesian(cx, cy, rInner, endAngle);
+  const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+  return [
+    `M ${startOuter.x} ${startOuter.y}`,
+    `A ${rOuter} ${rOuter} 0 ${largeArcFlag} 0 ${endOuter.x} ${endOuter.y}`,
+    `L ${startInner.x} ${startInner.y}`,
+    `A ${rInner} ${rInner} 0 ${largeArcFlag} 1 ${endInner.x} ${endInner.y}`,
+    'Z',
+  ].join(' ');
+}
+
+function renderOverviewChart(data, filesIndexed = 0) {
+  const chart = document.getElementById('overview-chart');
+  const layout = document.getElementById('overview-chart-layout');
+  const empty = document.getElementById('overview-empty');
+  const legend = document.getElementById('overview-legend');
+  const total = document.getElementById('overview-chart-total');
+  const totalText = document.getElementById('overview-total-files');
+  const emptyTitle = empty?.querySelector('.empty-title');
+  const emptyDesc = empty?.querySelector('.empty-desc');
+  if (!chart || !layout || !empty || !legend || !total) return;
+
+  const items = Array.isArray(data) ? data.filter((item) => Number(item?.count || 0) > 0) : [];
+  chart.innerHTML = '';
+  if (!items.length) {
+    layout.style.display = 'none';
+    empty.style.display = '';
+    legend.replaceChildren();
+    total.textContent = Number(filesIndexed || 0).toLocaleString();
+    if (totalText) totalText.textContent = Number(filesIndexed || 0).toLocaleString();
+    if (emptyTitle) emptyTitle.textContent = 'No indexed files yet';
+    if (emptyDesc) emptyDesc.textContent = 'Run a scan to see the health of this library and which file types dominate it.';
+    return;
+  }
+
+  const totalFiles = items.reduce((sum, item) => sum + Number(item.count || 0), 0);
+  if (!totalFiles) return;
+
+  layout.style.display = '';
+  empty.style.display = 'none';
+  total.textContent = totalFiles.toLocaleString();
+  if (totalText) totalText.textContent = totalFiles.toLocaleString();
+  legend.replaceChildren();
+  const legendFragment = document.createDocumentFragment();
+  items.forEach((item) => {
+    const percent = totalFiles ? ((Number(item.count || 0) / totalFiles) * 100).toFixed(1) : '0.0';
+    const tone = Object.prototype.hasOwnProperty.call(OVERVIEW_COLORS, item?.tone) ? item.tone : 'other';
+    const color = OVERVIEW_COLORS[tone] || OVERVIEW_COLORS.other;
+    const toneClass = `overview-tone-${tone}`;
+
+    const row = document.createElement('div');
+    row.className = `filetype-legend-row overview-legend-row ${toneClass}`;
+
+    const rowInner = document.createElement('div');
+    rowInner.className = 'row';
+    rowInner.style.gap = '0.625rem';
+    rowInner.style.minWidth = '0';
+
+    const swatch = document.createElement('span');
+    swatch.className = `filetype-swatch overview-swatch ${toneClass}`;
+    swatch.style.background = color;
+
+    const label = document.createElement('span');
+    label.className = 'filetype-label';
+    label.textContent = String(item?.label ?? '');
+
+    const meta = document.createElement('div');
+    meta.className = 'filetype-meta';
+
+    const count = document.createElement('span');
+    count.className = 'filetype-count';
+    count.textContent = Number(item?.count || 0).toLocaleString();
+
+    const percentEl = document.createElement('span');
+    percentEl.className = 'filetype-percent';
+    percentEl.textContent = `${percent}%`;
+
+    rowInner.appendChild(swatch);
+    rowInner.appendChild(label);
+    meta.appendChild(count);
+    meta.appendChild(percentEl);
+    row.appendChild(rowInner);
+    row.appendChild(meta);
+    legendFragment.appendChild(row);
+  });
+  legend.appendChild(legendFragment);
+
+  let startAngle = 0;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const tone = Object.prototype.hasOwnProperty.call(OVERVIEW_COLORS, item?.tone) ? item.tone : 'other';
+    const angle = (Number(item.count || 0) / totalFiles) * 360;
+    const endAngle = startAngle + angle;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', describeArc(120, 120, 108, 68, startAngle, endAngle));
+    path.setAttribute('fill', OVERVIEW_COLORS[tone] || OVERVIEW_COLORS.other);
+    path.setAttribute('stroke', '#08101f');
+    path.setAttribute('stroke-width', '2');
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    const percent = totalFiles ? ((Number(item.count || 0) / totalFiles) * 100).toFixed(1) : '0.0';
+    title.textContent = `${item.label}: ${item.count} files (${percent}%)`;
+    path.appendChild(title);
+    chart.appendChild(path);
+    startAngle = endAngle;
+  }
+}
+
+function renderSetupDiagnostics(setup) {
+  const scanRoots = document.getElementById('setup-scan-roots-list');
+  const warnings = document.getElementById('setup-warnings');
+  if (!scanRoots || !warnings || !setup) return;
+
+  const roots = Array.isArray(setup.scan_roots) ? setup.scan_roots : [];
+  scanRoots.replaceChildren();
+  if (!roots.length) {
+    const empty = document.createElement('div');
+    empty.className = 'text-3';
+    empty.style.fontSize = '0.8125rem';
+    empty.style.padding = '0.5rem 0';
+    empty.textContent = 'No scan roots configured yet.';
+    scanRoots.appendChild(empty);
+  } else {
+    const rootsFragment = document.createDocumentFragment();
+    roots.forEach((root) => {
+      const allOk = Boolean(root.exists && root.is_dir && root.readable);
+      const iconClass = allOk ? 'ok' : root.exists ? 'warn' : 'error';
+      const icon = allOk ? '✓' : root.exists ? '!' : '✗';
+      let badgeClass = 'badge-green';
+      let badgeText = 'accessible';
+      if (!root.exists) {
+        badgeClass = 'badge-red';
+        badgeText = 'not found';
+      } else if (!root.is_dir) {
+        badgeClass = 'badge-amber';
+        badgeText = 'not a directory';
+      } else if (!root.readable) {
+        badgeClass = 'badge-amber';
+        badgeText = 'not readable';
+      }
+      const row = document.createElement('div');
+      row.className = 'diag-row';
+
+      const iconEl = document.createElement('div');
+      iconEl.className = `diag-icon ${iconClass}`;
+      iconEl.textContent = icon;
+
+      const content = document.createElement('div');
+
+      const name = document.createElement('div');
+      name.className = 'diag-name mono';
+      name.style.fontSize = '0.8125rem';
+      name.textContent = String(root.path || '');
+
+      const badgeRow = document.createElement('div');
+      badgeRow.className = 'row';
+      badgeRow.style.gap = '0.5rem';
+      badgeRow.style.marginTop = '3px';
+
+      const badge = document.createElement('span');
+      badge.className = `badge ${badgeClass}`;
+      badge.textContent = badgeText;
+
+      badgeRow.appendChild(badge);
+      content.appendChild(name);
+      content.appendChild(badgeRow);
+      row.appendChild(iconEl);
+      row.appendChild(content);
+      rootsFragment.appendChild(row);
+    });
+    scanRoots.appendChild(rootsFragment);
+  }
+
+  const warningList = Array.isArray(setup.warnings) ? setup.warnings : [];
+  if (!warningList.length) {
+    warnings.style.display = 'none';
+    warnings.replaceChildren();
+    return;
+  }
+
+  warnings.replaceChildren();
+  const alert = document.createElement('div');
+  alert.className = 'alert alert-amber';
+
+  const icon = document.createElement('span');
+  icon.style.flexShrink = '0';
+  icon.textContent = '⚠';
+
+  const content = document.createElement('div');
+  const summary = document.createElement('strong');
+  summary.textContent = `${warningList.length} warning${warningList.length === 1 ? '' : 's'} detected`;
+
+  const list = document.createElement('ul');
+  list.className = 'alert-list';
+  warningList.forEach((warning) => {
+    const item = document.createElement('li');
+    item.textContent = String(warning);
+    list.appendChild(item);
+  });
+
+  content.appendChild(summary);
+  content.appendChild(list);
+  alert.appendChild(icon);
+  alert.appendChild(content);
+  warnings.appendChild(alert);
+  warnings.style.display = '';
+}
+
 function initScheduleField() {
   const input = document.getElementById('schedule-input');
   const preset = document.getElementById('schedule-preset');
@@ -358,44 +803,21 @@ function initScheduleField() {
 async function refreshDashboard() {
   if (!document.getElementById('runtime-status')) return;
 
+  const refreshSeq = ++_dashboardRefreshSeq;
+
   const [status, scanState] = await Promise.all([
     fetchJson('/status'),
     fetchJson('/api/scan/current'),
   ]);
 
+  if (refreshSeq !== _dashboardRefreshSeq) return;
+
   if (status) {
-    const rtEl  = document.getElementById('runtime-status');
-    const fiEl  = document.getElementById('files-indexed');
-    const okEl  = document.getElementById('count-ok');
-    const crEl  = document.getElementById('count-corrupt');
-    const urEl  = document.getElementById('count-unreadable');
-    const dot   = document.getElementById('status-dot');
-    const bannerState = document.getElementById('banner-state');
-    const bannerDetail = document.getElementById('banner-detail');
-
-    if (rtEl) rtEl.textContent = status.status;
-    if (fiEl) fiEl.textContent = (status.files_indexed ?? 0).toLocaleString();
-    if (okEl) okEl.textContent = (status.files_indexed ?? 0).toLocaleString();
-    if (crEl) crEl.textContent = (status.by_status?.corrupt ?? 0).toLocaleString();
-    if (urEl) urEl.textContent = (status.by_status?.unreadable ?? 0).toLocaleString();
-
-    const corruptCard    = document.getElementById('corrupt-card');
-    const unreadableCard = document.getElementById('unreadable-card');
-    if (corruptCard)    corruptCard.className    = (status.by_status?.corrupt    ?? 0) > 0 ? 'card card-danger' : 'card';
-    if (unreadableCard) unreadableCard.className = (status.by_status?.unreadable ?? 0) > 0 ? 'card card-warn'   : 'card';
-
-    const s = status.status;
-    const hasBad = (status.by_status?.corrupt ?? 0) > 0 || (status.by_status?.unreadable ?? 0) > 0;
-    if      (s === 'scanning')                            setDotClass(dot, 'dot-blue');
-    else if (hasBad)                                      setDotClass(dot, 'dot-red');
-    else if (s === 'idle' && (status.files_indexed ?? 0) > 0) setDotClass(dot, 'dot-green');
-    else if (s === 'degraded' || s === 'error')           setDotClass(dot, 'dot-amber');
-    else                                                  setDotClass(dot, 'dot-gray');
-
-    const banner = dashboardBanner(status);
-    if (bannerState) bannerState.textContent = banner.state;
-    if (bannerDetail) bannerDetail.textContent = banner.detail;
-    updateSchedulerCard(status.scheduler);
+    updateHero(status);
+    updateTimeline(status);
+    updateIssuePills(status);
+    renderOverviewChart(status.overview_breakdown, status.files_indexed ?? 0);
+    refreshTimestamps();
   }
 
   if (scanState) {
@@ -499,6 +921,11 @@ async function submitSettingsForm(event) {
     : 'Saved successfully.';
   if (feedback) { feedback.textContent = msg; feedback.className = 'form-feedback ok'; }
   toast(msg, 'success');
+
+  if (form.id === 'setup-form') {
+    const setup = await fetchJson('/api/setup');
+    if (setup) renderSetupDiagnostics(setup);
+  }
 }
 
 // ── Issue filters ─────────────────────────────────────────────
@@ -544,6 +971,17 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(refreshTimestamps, 30000);
 
   initScheduleField();
+  const initialChart = document.getElementById('overview-chart');
+  if (initialChart?.dataset.overviewBreakdown) {
+    try {
+      renderOverviewChart(
+        JSON.parse(initialChart.dataset.overviewBreakdown),
+        Number(document.getElementById('overview-chart-total')?.textContent || '0'),
+      );
+    } catch {
+      renderOverviewChart([], Number(document.getElementById('overview-chart-total')?.textContent || '0'));
+    }
+  }
   refreshDashboard();
   setInterval(refreshDashboard, 5000);
 

@@ -94,7 +94,7 @@ class SchedulerService:
         result_text = "started"
         error_text = None
         try:
-            result = self._scan_manager.start()
+            result = self._scan_manager.start(origin="scheduled")
             if not result.accepted:
                 result_text = "skipped: scan already running"
         except Exception as e:
@@ -130,11 +130,21 @@ class SchedulerService:
 
     def as_dict(self) -> dict[str, Any]:
         state = self.state()
+        completed = self._scan_manager.last_run_summary("scheduled")
+        last_result = state.last_trigger_result
+        if completed is not None:
+            if completed.get("state") == "completed":
+                issues = int(completed.get("issues") or 0)
+                last_result = "completed" if issues == 0 else f"completed with {issues} issue{'s' if issues != 1 else ''}"
+            elif completed.get("state") == "failed":
+                last_result = completed.get("last_error") or "failed"
+            elif completed.get("state") == "interrupted":
+                last_result = "interrupted"
         return {
             "enabled": state.enabled,
             "cron": state.cron,
             "next_run_at": state.next_run_at,
             "last_run_at": state.last_run_at,
-            "last_trigger_result": state.last_trigger_result,
+            "last_trigger_result": last_result,
             "last_error": state.last_error,
         }
