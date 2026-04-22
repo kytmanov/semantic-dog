@@ -66,6 +66,8 @@ _PREFIX = "SDOG_"
 # Env vars that are colon-separated lists
 _LIST_VARS = {"SDOG_PATHS", "SDOG_EXCLUDE"}
 
+_FILE_ENV_FIELDS = frozenset({"http_basic_password", "smtp_pass", "mcp_auth_token", "truenas_key"})
+
 EDITABLE_CONFIG_FIELDS = frozenset(
     {
         "paths",
@@ -237,8 +239,21 @@ def _parse_list(val: Any) -> list[str]:
 
 def _apply_env(data: dict[str, Any]) -> None:
     """Override dict values with SDOG_* environment variables."""
+    for field in _FILE_ENV_FIELDS:
+        env_key = f"{_PREFIX}{field.upper()}"
+        file_key = f"{_PREFIX}{field.upper()}_FILE"
+        if env_key in os.environ or file_key not in os.environ:
+            continue
+        file_path = Path(os.environ[file_key]).expanduser()
+        try:
+            data[field] = file_path.read_text().strip()
+        except OSError as e:
+            raise ConfigError(f"Env var {file_key} points to unreadable file {file_path}: {e}") from e
+
     for key, raw in os.environ.items():
         if not key.startswith(_PREFIX):
+            continue
+        if key.endswith("_FILE"):
             continue
         cfg_key = key[len(_PREFIX):].lower()  # SDOG_HTTP_PORT → http_port
         if cfg_key not in _DEFAULTS:

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from httpx import AsyncClient, ASGITransport
 
+from semanticdog import __version__
 import semanticdog.server as server_module
 from semanticdog.server import app, build_app, create_app
 from semanticdog.config import Config
@@ -81,6 +82,43 @@ class TestHealthEndpoint:
         auth_app = build_app(cfg, Database(cfg.db_path))
         async with AsyncClient(transport=ASGITransport(app=auth_app), base_url="http://test") as c:
             r = await c.get("/health")
+        assert r.status_code == 200
+
+    async def test_ready_returns_503_for_unconfigured_runtime(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/ready")
+        assert r.status_code == 503
+        assert r.json()["ready"] is False
+
+    async def test_ready_returns_200_for_usable_runtime(self, tmp_path):
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), workers=1, raw_workers=1)
+        ready_app = build_app(cfg, Database(cfg.db_path))
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"paths:\n  - {tmp_path}\n")
+        ready_app.state.runtime.config_path = str(config_path)
+
+        async with AsyncClient(transport=ASGITransport(app=ready_app), base_url="http://test") as c:
+            r = await c.get("/ready")
+        assert r.status_code == 200
+        assert r.json()["ready"] is True
+
+    async def test_ready_stays_public_with_auth_enabled(self, tmp_path):
+        cfg = Config(
+            paths=[str(tmp_path)],
+            db_path=str(tmp_path / "state.db"),
+            workers=1,
+            raw_workers=1,
+            http_basic_enabled=True,
+            http_basic_username="admin",
+            http_basic_password="secret",
+        )
+        auth_app = build_app(cfg, Database(cfg.db_path))
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"paths:\n  - {tmp_path}\n")
+        auth_app.state.runtime.config_path = str(config_path)
+
+        async with AsyncClient(transport=ASGITransport(app=auth_app), base_url="http://test") as c:
+            r = await c.get("/ready")
         assert r.status_code == 200
 
 
@@ -183,6 +221,14 @@ class TestApiEndpoints:
             r = await c.get("/api/app")
         assert r.status_code == 200
         assert r.json()["ready"] is True
+        assert "readiness" in r.json()
+        assert r.json()["version"] == __version__
+
+    async def test_openapi_uses_package_version(self, configured_app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/openapi.json")
+        assert r.status_code == 200
+        assert r.json()["info"]["version"] == __version__
 
     async def test_api_config_returns_sources_and_effective_values(self, configured_app, tmp_path):
         config_path = tmp_path / "config.yaml"

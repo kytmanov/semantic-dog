@@ -16,11 +16,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from . import __version__
 from .config import RESTART_REQUIRED_CONFIG_FIELDS
 from .config_store import default_config_view
 from .notify import Notifier, ScanSummary
 from .runtime import AppRuntime
-from .services.diagnostics import collect_setup_diagnostics
+from .services.diagnostics import collect_readiness, collect_setup_diagnostics
 
 if TYPE_CHECKING:
     from .config import Config
@@ -31,7 +32,10 @@ if TYPE_CHECKING:
 # Module-level app — routes defined here, wired to real state by build_app()
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="SemanticDog", version="0.1.0")
+APP_TITLE = "SemanticDog"
+
+
+app = FastAPI(title=APP_TITLE, version=__version__)
 
 # Compatibility globals kept for older tests and call sites.
 # Route handlers use request.app.state.runtime instead.
@@ -78,7 +82,7 @@ def _unconfigured_response(runtime: AppRuntime) -> JSONResponse:
 
 
 def _is_public_route(path: str) -> bool:
-    return path in {"/health", "/favicon.ico"} or path.startswith("/static/")
+    return path in {"/health", "/ready", "/favicon.ico"} or path.startswith("/static/")
 
 
 def _is_authorized(request: Request, runtime: AppRuntime) -> bool:
@@ -180,7 +184,7 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
             if runtime.scheduler is not None:
                 runtime.scheduler.stop()
 
-    target_app = FastAPI(title="SemanticDog", version="0.1.0", lifespan=lifespan)
+    target_app = FastAPI(title=APP_TITLE, version=__version__, lifespan=lifespan)
     target_app.state.runtime = runtime
     target_app.state.mcp_mounted = False
 
@@ -207,6 +211,11 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
     @target_app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @target_app.get("/ready")
+    async def ready() -> JSONResponse:
+        readiness = collect_readiness(target_app.state.runtime)
+        return JSONResponse(status_code=200 if readiness["ready"] else 503, content=readiness)
 
     @target_app.get("/favicon.ico")
     async def favicon() -> Response:
@@ -390,8 +399,11 @@ def create_app(runtime: AppRuntime | None = None) -> FastAPI:
         runtime = _get_runtime(request)
         manager = runtime.scan_manager
         current = manager.current_snapshot() if manager is not None else None
+        readiness = collect_readiness(runtime)
         return {
             "ready": runtime.ready,
+            "readiness": readiness,
+            "version": __version__,
             "config_path": runtime.config_path,
             "config_error": runtime.config_error,
             "db_error": runtime.db_error,

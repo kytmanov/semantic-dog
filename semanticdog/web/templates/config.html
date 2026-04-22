@@ -220,6 +220,8 @@
             <td>
               {% if source == 'env' %}
                 <span class="tag-env">env</span>
+              {% elif source == 'env_file' %}
+                <span class="tag-env">env file</span>
               {% elif source == 'yaml' %}
                 <span class="badge badge-gray">yaml</span>
               {% else %}

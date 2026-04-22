@@ -31,11 +31,10 @@ fi
 git fetch origin master
 git checkout -b "release/v$VERSION" origin/master
 
-sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
 sed -i.bak "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" semanticdog/__init__.py && rm semanticdog/__init__.py.bak
 echo "Bumped version to $VERSION"
 
-git add pyproject.toml semanticdog/__init__.py
+git add semanticdog/__init__.py
 git commit -m "chore: release v$VERSION"
 git push origin "release/v$VERSION"
 

@@ -1,8 +1,6 @@
 services:
   semanticdog:
-    build:
-      context: .
-    image: semanticdog:local
+    image: ghcr.io/kytmanov/semantic-dog:latest
     container_name: semanticdog
     restart: unless-stopped
     # Uncomment and adjust if your NAS bind mounts require a specific uid:gid.
@@ -10,15 +8,15 @@ services:
     ports:
       - "8181:8181"
     environment:
-      SDOG_PATHS: /library/photos:/library/documents
-      SDOG_DB_PATH: /data/state/state.db
-      SDOG_HTTP_PORT: "8181"
-      SDOG_HTTP_BASIC_ENABLED: "true"
-      SDOG_HTTP_BASIC_USERNAME: admin
-      SDOG_HTTP_BASIC_PASSWORD: change-me
+      TZ: Europe/Berlin
     volumes:
-      - ./data/config:/data/config
-      - ./data/state:/data/state
-      - ./data/logs:/data/logs
+      - semanticdog-config:/data/config
+      - semanticdog-state:/data/state
+      - semanticdog-logs:/data/logs
       - /volume1/photos:/library/photos:ro
       - /volume1/documents:/library/documents:ro
+
+volumes:
+  semanticdog-config:
+  semanticdog-state:
+  semanticdog-logs:

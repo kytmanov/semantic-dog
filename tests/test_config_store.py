@@ -51,3 +51,14 @@ class TestConfigStore:
 
         assert view["effective"]["workers"] == 9
         assert view["sources"]["workers"] == "env"
+
+    def test_sources_prefer_direct_env_over_env_file(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("paths:\n  - /library\n")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD", "from-env")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD_FILE", "/tmp/secret")
+        store = ConfigStore(str(config_path))
+
+        view = store.get_view()
+
+        assert view["sources"]["http_basic_password"] == "env"

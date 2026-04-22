@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.0] — 2026-04-22
+
+### New features
+
+**Built-in Web UI for NAS and Docker installs**  
+SemanticDog now ships with setup, dashboard, issues, history, and configuration pages in the same service. For container deployments, the Web UI is now the main way to add scan roots, set the schedule, and review library health.
+
+**Docker-first NAS deployment**  
+Published container images are now the primary install path for NAS use. Images are built for `linux/amd64` and `linux/arm64`, and the documented deployment uses non-root-friendly named volumes for app data plus read-only library mounts.
+
+**Readiness and setup diagnostics**  
+Added a real `/ready` endpoint and richer setup diagnostics in the API. This makes it much easier to tell the difference between “the process is up” and “the app is actually ready to scan your library.”
+
+**Secret file support for container installs**  
+Selected sensitive settings can now be provided through `SDOG_*_FILE` environment variables, so passwords and tokens do not need to be written directly into Compose files.
+
+### Changes
+
+- Release automation now builds, smoke-tests, and publishes multi-arch GHCR images from version tags.
+- Docker docs and examples now center on the published image plus Web UI setup flow instead of local image builds and env-only configuration.
+
 ## [0.2.0] — 2026-04-14
 
 ### New features

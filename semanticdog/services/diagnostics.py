@@ -83,3 +83,25 @@ def collect_setup_diagnostics(runtime) -> dict:
         "dependencies": deps,
         "warnings": warnings,
     }
+
+
+def collect_readiness(runtime) -> dict:
+    setup = collect_setup_diagnostics(runtime)
+    checks = {
+        "config_path_writable": setup["config"]["parent_writable"],
+        "db_parent_writable": setup["db"]["parent_writable"],
+        "db_available": runtime.db_error is None and runtime.db is not None,
+        "config_valid": runtime.config_error is None,
+        "scan_roots_configured": bool(runtime.cfg and runtime.cfg.paths),
+        "scan_roots_accessible": bool(setup["scan_roots"]) and all(
+            root["exists"] and root["is_dir"] and root["readable"] for root in setup["scan_roots"]
+        ),
+    }
+    ready = all(checks.values())
+    return {
+        "ready": ready,
+        "checks": checks,
+        "config_error": runtime.config_error,
+        "db_error": runtime.db_error,
+        "warnings": setup["warnings"],
+    }
