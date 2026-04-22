@@ -141,6 +141,8 @@ function refreshTimestamps() {
 let _fastTimer   = null;
 let _fastUntil   = 0;
 let _scanPending = false; // optimistic: show progress until first confirmed state
+let _dashboardRefreshSeq = 0;
+let _terminalRefreshScheduled = false;
 
 function startFastPoll() {
   _fastUntil = Date.now() + 45000; // 45s window
@@ -154,6 +156,15 @@ function startFastPoll() {
 function stopFastPoll() {
   if (_fastTimer) { clearInterval(_fastTimer); _fastTimer = null; }
   _scanPending = false;
+}
+
+function scheduleTerminalDashboardRefresh() {
+  if (_terminalRefreshScheduled) return;
+  _terminalRefreshScheduled = true;
+  setTimeout(() => {
+    _terminalRefreshScheduled = false;
+    refreshDashboard();
+  }, 150);
 }
 
 // ── Dashboard ─────────────────────────────────────────────────
@@ -202,6 +213,8 @@ function updateScanSection(current, last) {
   if (!progressSection) return;
 
   const scanning = current && ['starting', 'running'].includes(current.state);
+  const terminalLast = !scanning && last && ['completed', 'failed', 'interrupted'].includes(last.state);
+  if (terminalLast) _scanPending = false;
   // Show progress while actively scanning OR briefly while optimistic pending
   const showProgress = scanning || _scanPending;
 
@@ -229,6 +242,7 @@ function updateScanSection(current, last) {
   }
 
   if (scanning) {
+    _terminalRefreshScheduled = false;
     _scanPending = false; // got real data — no longer optimistic
     if (fill) fill.classList.remove('indeterminate');
 
@@ -247,6 +261,9 @@ function updateScanSection(current, last) {
       `${(current.processed || 0).toLocaleString()} / ${(current.discovered_total || 0).toLocaleString()}`;
     if (rate)  rate.textContent  = `${Number(current.files_per_sec || 0).toFixed(1)} files/sec`;
     if (eta)   eta.textContent   = fmtEta(current.eta_s);
+  } else if (terminalLast) {
+    scheduleTerminalDashboardRefresh();
+    if (_fastTimer) _fastUntil = Math.max(_fastUntil, Date.now() + 1200);
   } else if (!showProgress) {
     // Scan finished — extend fast poll a bit to let the next status poll refresh counts,
     // then stop it so we fall back to the slow 5s interval.
@@ -349,12 +366,14 @@ function describeArc(cx, cy, rOuter, rInner, startAngle, endAngle) {
   ].join(' ');
 }
 
-function renderFileTypeChart(data) {
+function renderFileTypeChart(data, filesIndexed = 0) {
   const chart = document.getElementById('filetype-chart');
   const layout = document.getElementById('filetype-layout');
   const empty = document.getElementById('filetype-empty');
   const legend = document.getElementById('filetype-legend');
   const total = document.getElementById('filetype-chart-total');
+  const emptyTitle = empty?.querySelector('.empty-title');
+  const emptyDesc = empty?.querySelector('.empty-desc');
   if (!chart || !layout || !empty || !legend || !total) return;
 
   const items = Array.isArray(data) ? data.filter((item) => Number(item?.count || 0) > 0) : [];
@@ -363,7 +382,9 @@ function renderFileTypeChart(data) {
     layout.style.display = 'none';
     empty.style.display = '';
     legend.innerHTML = '';
-    total.textContent = '0';
+    total.textContent = Number(filesIndexed || 0).toLocaleString();
+    if (emptyTitle) emptyTitle.textContent = 'No indexed files yet';
+    if (emptyDesc) emptyDesc.textContent = 'Run a scan to see which file types make up this library.';
     return;
   }
 
@@ -494,10 +515,14 @@ function initScheduleField() {
 async function refreshDashboard() {
   if (!document.getElementById('runtime-status')) return;
 
+  const refreshSeq = ++_dashboardRefreshSeq;
+
   const [status, scanState] = await Promise.all([
     fetchJson('/status'),
     fetchJson('/api/scan/current'),
   ]);
+
+  if (refreshSeq !== _dashboardRefreshSeq) return;
 
   if (status) {
     const rtEl  = document.getElementById('runtime-status');
@@ -531,9 +556,9 @@ async function refreshDashboard() {
      const banner = dashboardBanner(status);
      if (bannerState) bannerState.textContent = banner.state;
      if (bannerDetail) bannerDetail.textContent = banner.detail;
-     renderFileTypeChart(status.file_types);
+     renderFileTypeChart(status.file_types, status.files_indexed ?? 0);
      updateSchedulerCard(status.scheduler);
-   }
+    }
 
   if (scanState) {
     updateScanSection(scanState.current, scanState.last);
@@ -689,9 +714,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const initialChart = document.getElementById('filetype-chart');
   if (initialChart?.dataset.fileTypes) {
     try {
-      renderFileTypeChart(JSON.parse(initialChart.dataset.fileTypes));
+      renderFileTypeChart(
+        JSON.parse(initialChart.dataset.fileTypes),
+        Number(document.getElementById('filetype-chart-total')?.textContent || '0'),
+      );
     } catch {
-      renderFileTypeChart([]);
+      renderFileTypeChart([], Number(document.getElementById('filetype-chart-total')?.textContent || '0'));
     }
   }
   refreshDashboard();

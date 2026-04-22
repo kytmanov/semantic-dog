@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import socket
 import subprocess
@@ -145,6 +146,117 @@ def test_user_can_add_second_root_then_run_scan_from_dashboard(tmp_path: Path):
             page.goto(f"http://127.0.0.1:{port}/config")
             page.set_viewport_size({"width": 390, "height": 1000})
             expect(page.locator("html")).to_have_js_property("scrollWidth", 390)
+
+            browser.close()
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=5)
+
+
+@pytest.mark.playwright
+def test_dashboard_ignores_stale_status_responses_after_scan(tmp_path: Path):
+    library = tmp_path / "library"
+    state_dir = tmp_path / "state"
+    log_dir = tmp_path / "logs"
+    library.mkdir()
+    state_dir.mkdir()
+    log_dir.mkdir()
+
+    make_minimal_jpeg(library / "good.jpg")
+    make_truncated_jpeg(library / "bad.jpg")
+
+    port = _free_port()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  - {library}",
+                f"db_path: {state_dir / 'state.db'}",
+                "workers: 1",
+                "raw_workers: 1",
+                "validation_timeout_s: 30",
+                "force_recheck_days: 90",
+                "trigger_cooldown_s: 0",
+                f"http_port: {port}",
+                "",
+            ]
+        )
+    )
+
+    log_file = log_dir / "server.log"
+    server = subprocess.Popen(
+        [
+            "uv",
+            "run",
+            "sdog",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--config",
+            str(config_path),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=log_file.open("w"),
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        _wait_for_http(port)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="chrome", headless=True)
+            page = browser.new_page()
+
+            stale_status_served = {"done": False}
+
+            def fulfill_first_status_with_stale(route):
+                if stale_status_served["done"]:
+                    route.continue_()
+                    return
+
+                stale_status_served["done"] = True
+                page.wait_for_timeout(2500)
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "status": "idle",
+                            "files_indexed": 0,
+                            "by_status": {},
+                            "last_scan": None,
+                            "file_types": [],
+                            "current_scan": None,
+                            "scheduler": {
+                                "enabled": True,
+                                "cron": "0 2 * * *",
+                                "next_run_at": None,
+                                "last_run_at": None,
+                                "last_trigger_result": None,
+                                "last_error": None,
+                            },
+                        }
+                    ),
+                )
+
+            page.route(f"http://127.0.0.1:{port}/status", fulfill_first_status_with_stale)
+
+            page.goto(f"http://127.0.0.1:{port}/dashboard", wait_until="domcontentloaded")
+            page.wait_for_timeout(150)
+            page.get_by_role("button", name="Run Scan").click()
+
+            expect(page.locator("#files-indexed")).to_have_text("2", timeout=10000)
+            expect(page.locator("#banner-state")).to_have_text("Issues found", timeout=10000)
+            expect(page.locator("#filetype-layout")).to_be_visible()
+            expect(page.locator("#filetype-empty")).not_to_be_visible()
+            expect(page.locator(".filetype-label", has_text="JPG")).to_be_visible()
 
             browser.close()
     finally:

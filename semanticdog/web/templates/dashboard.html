@@ -224,9 +224,9 @@
 
   {% set ls = status.get("last_scan") %}
   {% if ls %}
-  <div class="card">
-    <div class="row-between">
-      <div class="col">
+  <div class="card last-scan-card">
+    <div class="last-scan-layout">
+      <div class="col" style="min-width:0;">
         <div class="card-label">Last Scan</div>
         <div class="row" style="gap:0.625rem; flex-wrap:wrap; margin-top:0.25rem;">
           {% if ls.get("finished_at") %}
@@ -243,18 +243,37 @@
             {{ ls.get("started_at", "") }}
           </span>
         </div>
-        <div class="text-3 mono" style="font-size:0.75rem; margin-top:0.375rem;">
+        <div class="text-3 mono last-scan-scope">
           {{ ls.get("scope") or "all configured paths" }}
         </div>
       </div>
-      <div class="col" style="text-align:right; flex-shrink:0;">
-        <div class="stat-num text-1" style="font-size:1.375rem;" id="last-scan-files-checked">{{ ls.get("total", 0) | int }}</div>
-        <div class="stat-label">files examined</div>
-        {% if ls.get("files_per_sec") %}
-          <div class="text-3" style="font-size:0.75rem; margin-top:0.125rem;">
-            {{ "%.1f"|format(ls.get("files_per_sec")) }} files/sec
+
+      {% set had_issues = (ls.get("corrupt") or 0) + (ls.get("unreadable") or 0) %}
+      <div class="last-scan-metrics">
+        <div class="last-scan-metric">
+          <div class="last-scan-metric-value text-1" id="last-scan-files-checked">{{ ls.get("total", 0) | int }}</div>
+          <div class="last-scan-metric-label">Files examined</div>
+        </div>
+        <div class="last-scan-metric">
+          <div class="last-scan-metric-value text-1" data-dur-start="{{ ls.get('started_at', '') }}" data-dur-end="{{ ls.get('finished_at', '') }}">
+            {% if ls.get("finished_at") %}{{ ls.get("finished_at", "") }}{% else %}—{% endif %}
           </div>
-        {% endif %}
+          <div class="last-scan-metric-label">Duration</div>
+        </div>
+        <div class="last-scan-metric">
+          <div class="last-scan-metric-value {% if had_issues > 0 %}text-red{% else %}text-1{% endif %}">{{ had_issues }}</div>
+          <div class="last-scan-metric-label">Issues found</div>
+        </div>
+        <div class="last-scan-metric">
+          <div class="last-scan-metric-value text-1">
+            {% if ls.get("files_per_sec") %}
+              {{ "%.1f"|format(ls.get("files_per_sec")) }} f/s
+            {% else %}
+              —
+            {% endif %}
+          </div>
+          <div class="last-scan-metric-label">Average rate</div>
+        </div>
       </div>
     </div>
   </div>
