@@ -47,3 +47,121 @@ jobs:
 
       - name: Check deps matrix
         run: uv run sdog check-deps || true   # informational — exiftool absent in CI is expected
+
+  docker:
+    name: Docker build and smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: semanticdog:ci
+          build-args: |
+            VERSION=${{ github.sha }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_id }}
+
+      - name: Start container
+        run: |
+          mkdir -p "$RUNNER_TEMP/semanticdog/config" "$RUNNER_TEMP/semanticdog/state" "$RUNNER_TEMP/semanticdog/logs" "$RUNNER_TEMP/semanticdog/library"
+          docker run -d --name semanticdog-ci \
+            -p 8181:8181 \
+            -e TZ=UTC \
+            -v "$RUNNER_TEMP/semanticdog/config:/data/config" \
+            -v "$RUNNER_TEMP/semanticdog/state:/data/state" \
+            -v "$RUNNER_TEMP/semanticdog/logs:/data/logs" \
+            -v "$RUNNER_TEMP/semanticdog/library:/library:ro" \
+            semanticdog:ci
+
+      - name: Wait for liveness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8181/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs semanticdog-ci
+          exit 1
+
+      - name: Verify first-run readiness state
+        run: |
+          curl -fsS http://127.0.0.1:8181/health >/dev/null
+          ! curl -fsS http://127.0.0.1:8181/ready >/dev/null
+          curl -fsS http://127.0.0.1:8181/api/app | python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["readiness"]["ready"] is False; assert data["readiness"]["checks"]["scan_roots_configured"] is False'
+
+      - name: Save config through API
+        run: |
+          curl -fsS -X PUT http://127.0.0.1:8181/api/config \
+            -H 'Content-Type: application/json' \
+            --data '{"paths":["/library"],"schedule":"","workers":1,"raw_workers":1}' | python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["status"] == "saved"'
+
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8181/ready | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin)["ready"] else 1)'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs semanticdog-ci
+          exit 1
+
+      - name: Verify config persisted
+        run: |
+          test -f "$RUNNER_TEMP/semanticdog/config/config.yaml"
+          grep -q '/library' "$RUNNER_TEMP/semanticdog/config/config.yaml"
+
+      - name: Restart and verify persistence
+        run: |
+          docker restart semanticdog-ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8181/ready | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin)["ready"] else 1)'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs semanticdog-ci
+          exit 1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs semanticdog-ci
+
+      - name: Clean up container
+        if: always()
+        run: docker rm -f semanticdog-ci || true
+
+  docker-multiarch:
+    name: Docker multi-arch build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build amd64 and arm64 images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.sha }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_id }}

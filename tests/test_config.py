@@ -145,6 +145,32 @@ class TestEnvOverrides:
         cfg = load_config()
         assert cfg.smtp_port == 465
 
+    def test_http_basic_password_from_file_env(self, monkeypatch, tmp_path):
+        secret = tmp_path / "http-basic-password"
+        secret.write_text("supersecret\n")
+        monkeypatch.setenv("SDOG_PATHS", "/x")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_ENABLED", "true")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_USERNAME", "admin")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD_FILE", str(secret))
+        cfg = load_config()
+        assert cfg.http_basic_password == "supersecret"
+
+    def test_direct_env_wins_over_file_env(self, monkeypatch, tmp_path):
+        secret = tmp_path / "http-basic-password"
+        secret.write_text("from-file\n")
+        monkeypatch.setenv("SDOG_PATHS", "/x")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_ENABLED", "true")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_USERNAME", "admin")
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD_FILE", str(secret))
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD", "from-env")
+        cfg = load_config()
+        assert cfg.http_basic_password == "from-env"
+
+    def test_missing_file_env_raises(self, monkeypatch):
+        monkeypatch.setenv("SDOG_HTTP_BASIC_PASSWORD_FILE", "/no/such/file")
+        with pytest.raises(ConfigError, match="unreadable file"):
+            load_config()
+
 
 class TestValidation:
     def test_no_paths_raises(self):

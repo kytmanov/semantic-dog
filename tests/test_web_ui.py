@@ -84,6 +84,19 @@ class TestWebUi:
         assert r.status_code == 200
         assert "tag-env" in r.text
 
+    async def test_config_page_shows_env_file_override_marker(self, tmp_path, monkeypatch):
+        secret = tmp_path / "smtp-pass"
+        secret.write_text("secret\n")
+        monkeypatch.setenv("SDOG_SMTP_PASS_FILE", str(secret))
+        cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"), smtp_pass="secret")
+        app = create_app(AppRuntime(cfg=cfg, db=Database(cfg.db_path), config_store=ConfigStore()))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/config")
+
+        assert r.status_code == 200
+        assert "env file" in r.text
+
     async def test_issues_page_renders_issue_table(self, tmp_path):
         cfg = Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db"))
         db = Database(cfg.db_path)

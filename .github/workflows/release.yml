@@ -14,6 +14,7 @@ concurrency:
 permissions:
   contents: write       # create GitHub release
   id-token: write       # PyPI trusted publishing (OIDC — no token needed)
+  packages: write       # publish container image to GHCR
 
 jobs:
   test:
@@ -51,11 +52,10 @@ jobs:
       - name: Check package version matches tag
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(uv run python -c "import semanticdog; print(semanticdog.__version__)" 2>/dev/null \
-                || grep '^version' pyproject.toml | head -1 | sed 's/.*= *"//' | sed 's/".*//')
+          PKG=$(uv run python -c "import semanticdog; print(semanticdog.__version__)" 2>/dev/null)
           if [ "$TAG" != "$PKG" ]; then
             echo "Tag $TAG does not match package version $PKG"
-            echo "Bump version in pyproject.toml before tagging."
+            echo "Bump version in semanticdog/__init__.py before tagging."
             exit 1
           fi
 
@@ -64,6 +64,60 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  publish-container:
+    name: Publish container image
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/kytmanov/semantic-dog
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Build and push image
+        id: build_push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      - name: Print published digest
+        run: echo "Published ghcr.io/kytmanov/semantic-dog@${{ steps.build_push.outputs.digest }}"
 
   publish-pypi:
     name: Publish to PyPI

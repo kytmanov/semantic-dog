@@ -60,7 +60,10 @@ class ConfigStore:
         sources: dict[str, str] = {}
         for field in Config.__dataclass_fields__:
             env_name = f"SDOG_{field.upper()}"
-            if env_name in os.environ:
+            env_file_name = f"{env_name}_FILE"
+            if env_file_name in os.environ:
+                sources[field] = "env_file"
+            elif env_name in os.environ:
                 sources[field] = "env"
             elif field in raw:
                 sources[field] = "yaml"

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from semanticdog.config import Config
 from semanticdog.runtime import AppRuntime
-from semanticdog.services.diagnostics import collect_setup_diagnostics
+from semanticdog.services.diagnostics import collect_readiness, collect_setup_diagnostics
 
 
 class TestDiagnostics:
@@ -44,3 +44,31 @@ class TestDiagnostics:
         result = collect_setup_diagnostics(runtime)
 
         assert result["dependencies"] != []
+
+    def test_collect_readiness_reports_ready_for_writable_runtime(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("paths: []\n")
+        runtime = AppRuntime(
+            config_path=str(config_path),
+            cfg=Config(paths=[str(tmp_path)], db_path=str(tmp_path / "state.db")),
+            db=object(),
+        )
+
+        result = collect_readiness(runtime)
+
+        assert result["ready"] is True
+        assert result["checks"]["config_valid"] is True
+        assert result["checks"]["db_parent_writable"] is True
+
+    def test_collect_readiness_reports_missing_scan_roots(self, tmp_path):
+        missing = tmp_path / "missing"
+        runtime = AppRuntime(
+            config_path=str(tmp_path / "config.yaml"),
+            cfg=Config(paths=[str(missing)], db_path=str(tmp_path / "state.db")),
+            db=object(),
+        )
+
+        result = collect_readiness(runtime)
+
+        assert result["ready"] is False
+        assert result["checks"]["scan_roots_accessible"] is False

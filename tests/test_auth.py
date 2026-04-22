@@ -33,6 +33,29 @@ class TestHttpBasicAuth:
 
         assert r.status_code == 200
 
+    async def test_ready_remains_public(self, tmp_path):
+        cfg = Config(
+            paths=[str(tmp_path)],
+            db_path=str(tmp_path / "state.db"),
+            http_basic_enabled=True,
+            http_basic_username="admin",
+            http_basic_password="secret",
+        )
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"paths:\n  - {tmp_path}\n")
+        app = create_app(
+            AppRuntime(
+                cfg=cfg,
+                db=Database(cfg.db_path),
+                config_path=str(config_path),
+            )
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/ready")
+
+        assert r.status_code == 200
+
     async def test_favicon_remains_public(self, tmp_path):
         cfg = Config(
             paths=[str(tmp_path)],
