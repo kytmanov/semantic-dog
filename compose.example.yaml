@@ -16,6 +16,9 @@ services:
     restart: unless-stopped
     # Replace 1000 with your NAS user's UID (e.g., 1000, 568, etc.)
     user: "1000"
+    # Security: prevent container from gaining root access
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "8181:8181"
     environment:

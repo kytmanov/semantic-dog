@@ -44,8 +44,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system semanticdog \
-    && useradd --system --create-home --gid semanticdog semanticdog
+# Create non-root user with fixed UID/GID
+RUN groupadd --system --gid 999 semanticdog \
+    && useradd --system --uid 999 --gid 999 --create-home semanticdog
+
+# Prevent privilege escalation
+RUN echo 'semanticdog ALL=(ALL) NOPASSWD: !ALL' >> /etc/sudoers.d/semanticdog \
+    && chmod 0440 /etc/sudoers.d/semanticdog
 
 WORKDIR /app
 
