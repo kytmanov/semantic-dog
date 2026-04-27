@@ -55,11 +55,5 @@ filterwarnings = [
 [tool.hatch.build.targets.wheel]
 packages = ["semanticdog"]
 
-[tool.hatch.build]
-include = [
-    "semanticdog/web/templates/**/*",
-    "semanticdog/web/static/**/*",
-]
-
 [tool.hatch.version]
 path = "semanticdog/__init__.py"
