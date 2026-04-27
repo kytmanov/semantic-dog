@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] — 2026-04-27
+
+### Bug fixes
+
+- **PyPI wheel shipped zero Python files** — the global `[tool.hatch.build].include` whitelist in `pyproject.toml` overrode `packages = ["semanticdog"]`, causing `pip install semanticdog` to produce a broken package with only web assets and no `.py` files. Removed the whitelist; Hatchling now collects the full package directory automatically, including templates and static files. (Fixes #7)
+
 ## [0.3.2] — 2026-04-22
 
 ### New features
