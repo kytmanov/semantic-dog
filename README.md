@@ -1,7 +1,7 @@
 # SemanticDog
 
 <p align="center">
-  <a href="https://pepy.tech/projects/semanticdog"><img src="https://static.pepy.tech/personalized-badge/semanticdog?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads"></a>
+  <a href="https://pepy.tech/projects/semanticdog"><img src="https://static.pepy.tech/personalized-badge/semanticdog?period=total&units=NONE&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads"></a>
 <a href="https://github.com/kytmanov/semantic-dog/commits/master"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/kytmanov/semantic-dog?style=flat"></a>
 <a href="https://github.com/kytmanov/semantic-dog/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/kytmanov/semantic-dog/ci.yml?style=flat&amp;label=CI"></a> <a href="https://pypi.org/project/semanticdog/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/semanticdog?style=flat"></a>
 </p>
